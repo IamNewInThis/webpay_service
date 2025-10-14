@@ -24,7 +24,7 @@ Para desactivar el entorno basta con ejecutar `deactivate`.
 Con el entorno activo instala los paquetes necesarios:
 
 ```bash
-pip install fastapi uvicorn transbank
+pip install -r requirements.txt
 ```
 
 Puedes congelar la lista para despliegues posteriores:
