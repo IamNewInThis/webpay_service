@@ -39,7 +39,8 @@ async def webpay_init(request: Request):
     buy_order = f"O-{abs(hash(amount)) % 1000000}"
     session_id = f"S-{abs(hash(buy_order)) % 1000000}"
     # 🔹 URL de retorno debe apuntar a tu servidor público, no localhost
-    return_url = "https://webpay-service.onrender.com/webpay/commit"
+    # return_url = "https://webpay-service.onrender.com/webpay/commit"
+    return_url = "https://tecnogrow-webpay.odoo.com/shop/confirmation"
 
     tx = Transaction(options)
     response = tx.create(buy_order, session_id, amount, return_url)
@@ -54,4 +55,6 @@ async def webpay_commit(request: Request):
     tx = Transaction(options)
     result = tx.commit(token)
     print("✅ Resultado commit:", result)
-    return JSONResponse(content=result)
+    
+    return RedirectResponse(url="https://tecnogrow-webpay.odoo.com/shop/confirmation?status=success&order=" + result["buy_order"])
+

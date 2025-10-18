@@ -83,6 +83,12 @@ La logica principal vive en `src/main.py`, donde se instancia `FastAPI` y se con
 - Implementar almacenamiento persistente del estado de las transacciones.
 - Escribir pruebas automaticas que cubran los flujos principales.
 
-
 ## url de prueba
 https://webpay3gint.transbank.cl/webpayserver/initTransaction?token_ws=01ab3321e3f70dedc382e6a09d54a9665bd6422d4eedf6bcf407a43b00a0a3e1
+
+## Tarjeta de Prueba
+4051 8856 0044 6623 - 05/28 - 123
+
+## Cuenta de prueba 
+11.111.111-1
+123
