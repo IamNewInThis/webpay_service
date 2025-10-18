@@ -14,7 +14,9 @@ Microservicio basado en FastAPI que expone endpoints de integracion con Webpay P
 2. Crear un entorno virtual: `python3 -m venv venv`
 3. Activar el entorno:
    - macOS/Linux: `source venv/bin/activate`
-   - Windows PowerShell: `.\venv\Scripts\Activate`
+   - Windows PowerShell: `.\venv\Scripts\activate.bat`
+   - Windows CMD: `venv\Scripts\activate.bat`
+   - Si tienes permisos de PowerShell: `.\venv\Scripts\Activate.ps1`
 4. Opcional: actualizar herramientas base dentro del entorno activado.
 
 Para desactivar el entorno basta con ejecutar `deactivate`.
@@ -80,3 +82,7 @@ La logica principal vive en `src/main.py`, donde se instancia `FastAPI` y se con
 - Agregar manejo de variables de entorno para los codigos/llaves productivos.
 - Implementar almacenamiento persistente del estado de las transacciones.
 - Escribir pruebas automaticas que cubran los flujos principales.
+
+
+## url de prueba
+https://webpay3gint.transbank.cl/webpayserver/initTransaction?token_ws=01ab3321e3f70dedc382e6a09d54a9665bd6422d4eedf6bcf407a43b00a0a3e1

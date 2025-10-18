@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from transbank.webpay.webpay_plus.transaction import Transaction
 from transbank.common.integration_commerce_codes import IntegrationCommerceCodes
 from transbank.common.integration_api_keys import IntegrationApiKeys
@@ -7,6 +8,18 @@ from transbank.common.options import WebpayOptions
 from transbank.common.integration_type import IntegrationType 
 
 app = FastAPI()
+
+# 🔹 Configuración de CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://tecnogrow-webpay.odoo.com",  # Tu dominio de Odoo específico
+        "https://*.odoo.com",  # Cualquier subdominio de odoo.com
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 # 🔹 Configuración de prueba (sandbox)
 commerce_code = IntegrationCommerceCodes.WEBPAY_PLUS
@@ -25,7 +38,8 @@ async def webpay_init(request: Request):
     amount = data.get("amount", 1000)
     buy_order = f"O-{abs(hash(amount)) % 1000000}"
     session_id = f"S-{abs(hash(buy_order)) % 1000000}"
-    return_url = "http://localhost:8000/webpay/commit"
+    # 🔹 URL de retorno debe apuntar a tu servidor público, no localhost
+    return_url = "https://webpay-service.onrender.com/webpay/commit"
 
     tx = Transaction(options)
     response = tx.create(buy_order, session_id, amount, return_url)
