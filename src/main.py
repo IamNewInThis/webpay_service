@@ -11,7 +11,7 @@ Funcionalidades:
 - 🔄 Integración con Odoo ERP (en desarrollo)
 
 Autor: Sistema de Pagos Tecnogrow
-Versión: 2.0.0
+Versión: 1.1.1
 """
 
 from fastapi import FastAPI
@@ -26,7 +26,7 @@ from src.routes.odoo_routes import odoo_router
 app = FastAPI(
     title="Webpay Service API",
     description="Microservicio para procesamiento de pagos con Webpay Plus",
-    version="2.0.0",
+    version="1.1.1",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -35,8 +35,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://tecnogrow-webpay.odoo.com",  # Dominio específico de Odoo
-        "https://*.odoo.com",                 # Cualquier subdominio de Odoo
+        "https://tecnogrow-webpay.odoo.com",  
+        "https://*.odoo.com",               
+        "http://localhost:8000",            
     ],
     allow_credentials=True,                   # Permitir cookies y headers de auth
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Métodos HTTP permitidos
@@ -61,16 +62,7 @@ async def root():
     return {
         "status": "ok",
         "message": "Webpay Service operativo",
-        "version": "1.1.0",
-        "services": {
-            "webpay": "✅ Disponible",
-            "odoo": "🔄 En desarrollo"
-        },
-        "endpoints": {
-            "webpay_init": "/webpay/init",
-            "webpay_commit": "/webpay/commit", 
-            "docs": "/docs"
-        }
+        "version": "1.1.1",
     }
 
 

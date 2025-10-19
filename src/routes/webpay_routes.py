@@ -8,13 +8,16 @@ Maneja inicialización, confirmación y cancelación de transacciones.
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 from src.services.webpay_service import WebpayService
+from src.services.odoo_sales import OdooSalesService
 from typing import Dict, Any
+from datetime import datetime
 
 # Crear router para agrupar las rutas de Webpay
 webpay_router = APIRouter(prefix="/webpay", tags=["webpay"])
 
-# Instanciar el servicio de Webpay
+# Instanciar servicios
 webpay_service = WebpayService()
+odoo_service = OdooSalesService()
 
 
 @webpay_router.post("/init")
@@ -89,8 +92,11 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
         # Confirmar transacción
         result = webpay_service.commit_transaction(token)
         
-        # Determinar redirección según el resultado
+        # Si la transacción es exitosa, intentar actualizar orden en Odoo
         if webpay_service.is_transaction_successful(result):
+            # Intentar encontrar y actualizar la orden correspondiente en Odoo
+            await _process_successful_payment(result)
+            
             redirect_url = (
                 f"https://tecnogrow-webpay.odoo.com/shop/confirmation"
                 f"?status=success&order={result['buy_order']}"
@@ -148,8 +154,11 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
         # Procesar transacción con token_ws
         result = webpay_service.commit_transaction(token)
         
-        # Determinar redirección según el resultado
+        # Si la transacción es exitosa, intentar actualizar orden en Odoo
         if webpay_service.is_transaction_successful(result):
+            # Intentar encontrar y actualizar la orden correspondiente en Odoo
+            await _process_successful_payment(result)
+            
             redirect_url = (
                 f"https://tecnogrow-webpay.odoo.com/shop/confirmation"
                 f"?status=success&order={result['buy_order']}"
@@ -166,3 +175,56 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
         return RedirectResponse(
             url="https://tecnogrow-webpay.odoo.com/shop/payment?status=error"
         )
+
+
+async def _process_successful_payment(payment_result: Dict[str, Any]) -> None:
+    """
+    🔄 Procesa un pago exitoso e intenta actualizar la orden en Odoo
+    
+    Extrae información del buy_order para encontrar la orden correspondiente
+    en Odoo y actualizar su estado de pago.
+    
+    Args:
+        payment_result: Resultado de la transacción de Webpay
+    """
+    try:
+        buy_order = payment_result.get("buy_order", "")
+        amount = payment_result.get("amount", 0)
+        
+        # Extraer datos del buy_order (formato: {customer_name}_{amount}_{date})
+        parts = buy_order.split("_")
+        if len(parts) >= 3:
+            customer_name = parts[0].replace("-", " ")  # Reconvertir espacios
+            order_date = parts[2]  # Formato YYYYMMDD
+            
+            # Convertir fecha a formato YYYY-MM-DD
+            formatted_date = f"{order_date[:4]}-{order_date[4:6]}-{order_date[6:8]}"
+            
+            print(f"🔍 Buscando orden en Odoo - Cliente: {customer_name}, Monto: {amount}, Fecha: {formatted_date}")
+            
+            # Buscar orden en Odoo por criterios
+            order = odoo_service.find_order_by_criteria(
+                customer_name=customer_name,
+                amount=amount,
+                order_date=formatted_date
+            )
+            
+            if order:
+                # Actualizar estado de la orden
+                success = odoo_service.update_order_payment_status(
+                    order_id=order["id"],
+                    payment_data=payment_result
+                )
+                
+                if success:
+                    print(f"✅ Orden {order['name']} actualizada exitosamente en Odoo")
+                else:
+                    print(f"❌ Error actualizando orden {order['name']} en Odoo")
+            else:
+                print("⚠️ No se encontró orden correspondiente en Odoo")
+        else:
+            print(f"⚠️ Formato de buy_order inválido: {buy_order}")
+            
+    except Exception as e:
+        print(f"❌ Error procesando pago exitoso: {str(e)}")
+        # No levantamos la excepción para que el pago continue normalmente

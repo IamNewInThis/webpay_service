@@ -2,185 +2,273 @@
 🏪 Servicio de Odoo Sales
 =========================
 Maneja la integración con Odoo ERP para gestión de órdenes de venta.
-Proporciona funciones para sincronizar transacciones de Webpay con Odoo.
+Basado en el código funcional de sale.py con autenticación JSON-RPC.
 """
 
-from typing import Dict, Any, Optional, List
+import os
 import requests
-import json
+from typing import Dict, Any, Optional, List
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
 
 
 class OdooSalesService:
     """
-    🔧 Servicio para integración con Odoo ERP
+    🔧 Servicio para integración con Odoo ERP usando JSON-RPC
     
-    Maneja la comunicación con la API de Odoo para:
-    - Crear/actualizar órdenes de venta
-    - Sincronizar estados de pago
-    - Buscar clientes y productos
+    Maneja la comunicación con Odoo para:
+    - Autenticación con credenciales
+    - Búsqueda y actualización de órdenes de venta
+    - Sincronización de estados de pago
     """
     
-    def __init__(self, base_url: str = None, api_key: str = None):
-        """
-        🚀 Inicializa la conexión con Odoo
+    def __init__(self):
+        """🚀 Inicializa la configuración de Odoo desde variables de entorno"""
+        self.odoo_url = os.getenv("ODOO_URL")
+        self.database = os.getenv("ODOO_DATABASE")
+        self.username = os.getenv("ODOO_USERNAME")
+        self.password = os.getenv("ODOO_PASSWORD")
         
-        Args:
-            base_url: URL base de la instancia de Odoo
-            api_key: API key para autenticación
-        """
-        self.base_url = base_url or "https://tecnogrow-webpay.odoo.com"
-        self.api_key = api_key
+        self.uid = None  # Se establecerá después de autenticar
         self.session = requests.Session()
         
-        # Headers por defecto para requests
-        self.session.headers.update({
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        })
-        
-        if self.api_key:
-            self.session.headers.update({
-                "Authorization": f"Bearer {self.api_key}"
-            })
-        
-        print(f"🔧 OdooSalesService inicializado - URL: {self.base_url}")
-    
-    def test_connection(self) -> bool:
+    def authenticate(self) -> bool:
         """
-        🏥 Verifica la conexión con Odoo
+        🔐 Autenticar con Odoo y obtener UID
         
         Returns:
-            True si la conexión es exitosa
+            True si la autenticación fue exitosa
         """
-        try:
-            # TODO: Implementar ping real a Odoo
-            response = self.session.get(f"{self.base_url}/web/database/selector")
-            return response.status_code == 200
-        except Exception as e:
-            print(f"❌ Error conectando con Odoo: {str(e)}")
-            return False
-    
-    def create_sale_order(self, order_data: Dict[str, Any]) -> Optional[int]:
-        """
-        📝 Crea una nueva orden de venta en Odoo
+        auth_payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "service": "common",
+                "method": "authenticate",
+                "args": [self.database, self.username, self.password, {}]
+            },
+            "id": 1
+        }
         
-        Args:
-            order_data: Datos de la orden (cliente, productos, montos, etc.)
-            
-        Returns:
-            ID de la orden creada en Odoo o None si falló
-        """
         try:
-            print(f"📝 Creando orden de venta en Odoo")
+            print("� Intentando autenticar con Odoo...")
+            response = self.session.post(f"{self.odoo_url}/jsonrpc", json=auth_payload)
             
-            # TODO: Implementar llamada real a API de Odoo
-            # Estructura típica para crear orden en Odoo:
-            # POST /api/sale.order con datos de la orden
-            
-            # Simulación por ahora
-            print(f"📝 Orden simulada creada con datos: {order_data}")
-            return 12345  # ID simulado
-            
+            if response.ok:
+                result = response.json()
+                if "result" in result and result["result"]:
+                    self.uid = result["result"]
+                    print(f"✅ Autenticado correctamente. UID: {self.uid}")
+                    return True
+                else:
+                    print("❌ Error de autenticación:", result.get("error", "Credenciales inválidas"))
+                    return False
+            else:
+                print(f"❌ Error HTTP: {response.status_code} - {response.text}")
+                return False
+                
         except Exception as e:
-            print(f"❌ Error creando orden en Odoo: {str(e)}")
-            return None
-    
-    def update_order_payment_status(self, buy_order: str, payment_data: Dict[str, Any]) -> bool:
-        """
-        💳 Actualiza el estado de pago de una orden
-        
-        Args:
-            buy_order: Número de orden de compra
-            payment_data: Datos del pago (status, transaction_id, amount, etc.)
-            
-        Returns:
-            True si la actualización fue exitosa
-        """
-        try:
-            print(f"💳 Actualizando estado de pago - Orden: {buy_order}")
-            print(f"💳 Datos de pago: {payment_data}")
-            
-            # TODO: Implementar actualización real en Odoo
-            # Típicamente sería:
-            # 1. Buscar la orden por buy_order
-            # 2. Actualizar el estado de pago
-            # 3. Crear registro de pago si es exitoso
-            
-            return True  # Simulación exitosa
-            
-        except Exception as e:
-            print(f"❌ Error actualizando pago en Odoo: {str(e)}")
+            print(f"❌ Error autenticando con Odoo: {str(e)}")
             return False
     
     def find_order_by_criteria(self, customer_name: str, amount: int, order_date: str) -> Optional[Dict[str, Any]]:
         """
-        🔍 Busca una orden en Odoo por criterios de matching
+        🔍 Busca una orden por criterios de matching (nombre, monto, fecha)
         
         Args:
             customer_name: Nombre del cliente
             amount: Monto de la orden
-            order_date: Fecha de la orden
+            order_date: Fecha de la orden (YYYY-MM-DD)
             
         Returns:
-            Datos de la orden encontrada o None si no se encuentra
+            Orden encontrada o None si no se encuentra
         """
+        if not self.uid:
+            if not self.authenticate():
+                return None
+        
+        # Construir dominio de búsqueda
+        domain = []
+        
+        # Buscar por nombre del cliente (coincidencia parcial)
+        if customer_name:
+            domain.append(["partner_id", "ilike", customer_name])
+        
+        # Buscar por monto exacto
+        if amount:
+            domain.append(["amount_total", "=", amount])
+        
+        # Buscar por fecha del mismo día
+        if order_date:
+            domain.append(["date_order", ">=", f"{order_date} 00:00:00"])
+            domain.append(["date_order", "<=", f"{order_date} 23:59:59"])
+        
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "service": "object",
+                "method": "execute_kw",
+                "args": [
+                    self.database, self.uid, self.password,
+                    "sale.order", "search_read",
+                    [domain],
+                    {
+                        "fields": [
+                            "id", "name", "state", "amount_total", 
+                            "partner_id", "date_order", "invoice_status"
+                        ],
+                        "limit": 1
+                    }
+                ]
+            },
+            "id": 3
+        }
+        
         try:
-            print(f"🔍 Buscando orden - Cliente: {customer_name}, Monto: ${amount}")
+            print(f"🔍 Buscando orden - Cliente: {customer_name}, Monto: ${amount}, Fecha: {order_date}")
+            response = self.session.post(f"{self.odoo_url}/jsonrpc", json=payload)
             
-            # TODO: Implementar búsqueda real en Odoo
-            # Criterios de búsqueda:
-            # 1. Nombre del cliente (coincidencia parcial)
-            # 2. Monto exacto o rango cercano
-            # 3. Fecha de creación del mismo día
-            
-            # Simulación
-            if customer_name and amount:
-                return {
-                    "id": 67890,
-                    "name": "SO-2025-001",
-                    "partner_name": customer_name,
-                    "amount_total": amount,
-                    "date_order": order_date,
-                    "state": "draft"
-                }
-            
-            return None
-            
+            if response.ok:
+                result = response.json()
+                if "result" in result and result["result"]:
+                    orders = result["result"]
+                    if orders:
+                        order = orders[0]
+                        print(f"✅ Orden encontrada: {order['name']}")
+                        return order
+                    else:
+                        print("❌ No se encontró orden con esos criterios")
+                        return None
+                else:
+                    print("⚠️ Sin resultados en la búsqueda")
+                    return None
+            else:
+                print(f"❌ Error en búsqueda: {response.status_code} - {response.text}")
+                return None
+                
         except Exception as e:
-            print(f"❌ Error buscando orden en Odoo: {str(e)}")
+            print(f"❌ Error buscando orden: {str(e)}")
             return None
     
-    def get_customer_orders(self, customer_name: str) -> List[Dict[str, Any]]:
+    def update_order_payment_status(self, order_id: int, payment_data: Dict[str, Any]) -> bool:
         """
-        👤 Obtiene todas las órdenes de un cliente
+        💳 Actualiza el estado de pago de una orden específica
         
         Args:
-            customer_name: Nombre del cliente
+            order_id: ID de la orden en Odoo
+            payment_data: Datos del pago (buy_order, amount, status, etc.)
             
         Returns:
-            Lista de órdenes del cliente
+            True si la actualización fue exitosa
         """
+        if not self.uid:
+            if not self.authenticate():
+                return False
+        
         try:
-            print(f"👤 Obteniendo órdenes del cliente: {customer_name}")
-            
-            # TODO: Implementar búsqueda real por cliente
-            
-            # Simulación
-            return [
-                {
-                    "id": 111,
-                    "name": "SO-2025-001",
-                    "amount_total": 150000,
-                    "state": "sale"
+            # Actualizar la orden para marcarla como pagada
+            update_payload = {
+                "jsonrpc": "2.0",
+                "method": "call",
+                "params": {
+                    "service": "object",
+                    "method": "execute_kw",
+                    "args": [
+                        self.database, self.uid, self.password,
+                        "sale.order", "write",
+                        [[order_id]],  # IDs a actualizar
+                        {
+                            "state": "sale",  # Cambiar estado a 'sale' (confirmada)
+                            # Agregar nota sobre el pago
+                            "note": f"Pago procesado vía Webpay - Orden: {payment_data.get('buy_order', 'N/A')}"
+                        }
+                    ]
                 },
-                {
-                    "id": 222,
-                    "name": "SO-2025-002", 
-                    "amount_total": 75000,
-                    "state": "draft"
-                }
-            ]
+                "id": 4
+            }
             
+            print(f"💳 Actualizando orden {order_id} con datos de pago...")
+            response = self.session.post(f"{self.odoo_url}/jsonrpc", json=update_payload)
+            
+            if response.ok:
+                result = response.json()
+                if "result" in result and result["result"]:
+                    print(f"✅ Orden {order_id} actualizada exitosamente")
+                    return True
+                else:
+                    print(f"❌ Error actualizando orden: {result.get('error', 'Error desconocido')}")
+                    return False
+            else:
+                print(f"❌ Error HTTP actualizando orden: {response.status_code}")
+                return False
+                
         except Exception as e:
-            print(f"❌ Error obteniendo órdenes del cliente: {str(e)}")
-            return []
+            print(f"❌ Error actualizando estado de pago: {str(e)}")
+            return False
+    
+    def get_order_by_id(self, order_id: int) -> Optional[Dict[str, Any]]:
+        """
+        📄 Obtiene una orden específica por su ID
+        
+        Args:
+            order_id: ID de la orden en Odoo
+            
+        Returns:
+            Datos de la orden o None si no se encuentra
+        """
+        if not self.uid:
+            if not self.authenticate():
+                return None
+        
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "service": "object",
+                "method": "execute_kw",
+                "args": [
+                    self.database, self.uid, self.password,
+                    "sale.order", "read",
+                    [[order_id]],  # ID específico
+                    {
+                        "fields": [
+                            "id", "name", "state", "amount_total", 
+                            "partner_id", "date_order", "invoice_status",
+                            "note", "order_line"
+                        ]
+                    }
+                ]
+            },
+            "id": 5
+        }
+        
+        try:
+            print(f"📄 Obteniendo orden {order_id}...")
+            response = self.session.post(f"{self.odoo_url}/jsonrpc", json=payload)
+            
+            if response.ok:
+                result = response.json()
+                if "result" in result and result["result"]:
+                    orders = result["result"]
+                    if orders:
+                        order = orders[0]
+                        print(f"✅ Orden obtenida: {order['name']}")
+                        return order
+                    else:
+                        print(f"❌ Orden {order_id} no encontrada")
+                        return None
+                else:
+                    print(f"⚠️ Sin resultados para orden {order_id}")
+                    return None
+            else:
+                print(f"❌ Error obteniendo orden: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ Error obteniendo orden: {str(e)}")
+            return None
+    
+   
