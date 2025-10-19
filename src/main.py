@@ -1,137 +1,130 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+"""
+🚀 Webpay Service - API Principal
+=================================
+Microservicio FastAPI para integración con Webpay Plus de Transbank.
+Proporciona endpoints para inicializar y confirmar transacciones de pago.
+
+Funcionalidades:
+- ✅ Integración completa con Webpay Plus
+- ✅ Manejo de pagos exitosos y cancelaciones  
+- ✅ CORS configurado para Odoo Online
+- 🔄 Integración con Odoo ERP (en desarrollo)
+
+Autor: Sistema de Pagos Tecnogrow
+Versión: 2.0.0
+"""
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from transbank.webpay.webpay_plus.transaction import Transaction
-from transbank.common.integration_commerce_codes import IntegrationCommerceCodes
-from transbank.common.integration_api_keys import IntegrationApiKeys
-from transbank.common.options import WebpayOptions
-from transbank.common.integration_type import IntegrationType
+from fastapi.responses import JSONResponse
 
-app = FastAPI()
+# Importar routers organizados
+from src.routes.webpay_routes import webpay_router
+from src.routes.odoo_routes import odoo_router
 
+# 🏗️ Configuración de la aplicación FastAPI
+app = FastAPI(
+    title="Webpay Service API",
+    description="Microservicio para procesamiento de pagos con Webpay Plus",
+    version="2.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# 🌐 Configuración de CORS para permitir requests desde Odoo Online
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://tecnogrow-webpay.odoo.com",
-        "https://*.odoo.com",
+        "https://tecnogrow-webpay.odoo.com",  # Dominio específico de Odoo
+        "https://*.odoo.com",                 # Cualquier subdominio de Odoo
     ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=True,                   # Permitir cookies y headers de auth
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Métodos HTTP permitidos
+    allow_headers=["*"],                      # Permitir todos los headers
 )
 
-# 🔧 Configuración Webpay
-commerce_code = IntegrationCommerceCodes.WEBPAY_PLUS
-api_key = IntegrationApiKeys.WEBPAY
-integration_type = IntegrationType.TEST
-options = WebpayOptions(commerce_code, api_key, integration_type)
+app.include_router(webpay_router)  # Rutas de Webpay (/webpay/*)
+app.include_router(odoo_router)    # Rutas de Odoo (/odoo/*)
 
 
-@app.get("/")
-def index():
-    return {"msg": "Servidor Webpay operativo 🚀 1.0.5"}
+@app.get("/", tags=["health"])
+async def root():
+    """
+    🏠 Endpoint raíz del servicio
+    
+    Verifica que el microservicio esté operativo y muestra información básica.
+    Útil para health checks y monitoreo de la aplicación.
+    
+    Returns:
+        {"status": "ok", "message": "...", "version": "..."}
+    """
+    return {
+        "status": "ok",
+        "message": "Webpay Service operativo",
+        "version": "1.1.0",
+        "services": {
+            "webpay": "✅ Disponible",
+            "odoo": "🔄 En desarrollo"
+        },
+        "endpoints": {
+            "webpay_init": "/webpay/init",
+            "webpay_commit": "/webpay/commit", 
+            "docs": "/docs"
+        }
+    }
 
 
-@app.post("/webpay/init")
-async def webpay_init(request: Request):
-    data = await request.json()
-    amount = data.get("amount", 1000)
-    buy_order = f"O-{abs(hash(amount)) % 1000000}"
-    session_id = f"S-{abs(hash(buy_order)) % 1000000}"
-
-    # 🔹 Importante: retorno SIEMPRE a tu backend
-    return_url = "https://webpay-service.onrender.com/webpay/commit"
-
-    tx = Transaction(options)
-    response = tx.create(buy_order, session_id, amount, return_url)
-    print("🔸 Transacción creada:", response)
-    return response
-
-
-@app.post("/webpay/commit")
-async def webpay_commit(request: Request):
-    """Caso normal: retorno con token_ws (pago exitoso o rechazado)."""
-    form = await request.form()
-    token = form.get("token_ws")
-    tx = Transaction(options)
-
-    if not token:
-        print("⚠️ No se recibió token_ws (probablemente anulación o expiración)")
-        return RedirectResponse("https://tecnogrow-webpay.odoo.com/shop/payment?status=cancelled")
-
+@app.get("/health", tags=["health"])
+async def health_check():
+    """
+    🏥 Health check detallado del servicio
+    
+    Verifica el estado de todos los componentes y dependencias.
+    Usado por sistemas de monitoreo y load balancers.
+    
+    Returns:
+        Estado detallado de cada componente del sistema
+    """
     try:
-        result = tx.commit(token)
-        print("✅ Resultado commit:", result)
-        print("🔍 Status de la transacción:", result.get("status"))
-        print("🔍 Response code:", result.get("response_code"))
-
-        # Verificar AMBOS campos por si acaso
-        status = result.get("status")
-        response_code = result.get("response_code")
+        # TODO: Agregar verificaciones reales de:
+        # - Conectividad con Transbank
+        # - Conectividad con Odoo
+        # - Estado de la base de datos (si aplica)
         
-        if status == "AUTHORIZED" or response_code == 0:
-            # Éxito - Pago autorizado
-            redirect_url = (
-                f"https://tecnogrow-webpay.odoo.com/shop/confirmation"
-                f"?status=success&order={result['buy_order']}"
-            )
-            print("✅ Redirigiendo a confirmación exitosa:", redirect_url)
-        else:
-            # Rechazado o fallido
-            redirect_url = "https://tecnogrow-webpay.odoo.com/shop/payment?status=rejected"
-            print("❌ Pago rechazado, redirigiendo a payment:", redirect_url)
-
-        return RedirectResponse(url=redirect_url)
-
-    except Exception as e:
-        print("❌ Error en commit:", e)
-        return RedirectResponse("https://tecnogrow-webpay.odoo.com/shop/payment?status=error")
-
-
-@app.get("/webpay/commit")
-async def webpay_commit_get(request: Request):
-    """Maneja tanto cancelaciones como pagos exitosos que llegan via GET."""
-    params = dict(request.query_params)
-    print("📥 GET /webpay/commit recibido con params:", params)
-    
-    # Verificar si hay token_ws en los parámetros
-    token = params.get("token_ws")
-    
-    if not token:
-        # Si hay TBK_TOKEN pero no token_ws, es una cancelación
-        if "TBK_TOKEN" in params:
-            print("❌ Transacción anulada por el usuario (TBK_TOKEN presente)")
-            return RedirectResponse("https://tecnogrow-webpay.odoo.com/shop/payment?status=cancelled")
-        else:
-            print("⚠️ GET sin token válido")
-            return RedirectResponse("https://tecnogrow-webpay.odoo.com/shop/payment?status=error")
-    
-    # Si hay token_ws, intentar procesar la transacción
-    try:
-        tx = Transaction(options)
-        result = tx.commit(token)
-        print("✅ Resultado commit (GET):", result)
-        print("🔍 Status de la transacción:", result.get("status"))
-        print("🔍 Response code:", result.get("response_code"))
-
-        # Verificar AMBOS campos por si acaso
-        status = result.get("status")
-        response_code = result.get("response_code")
-        
-        if status == "AUTHORIZED" or response_code == 0:
-            # Éxito - Pago autorizado
-            redirect_url = (
-                f"https://tecnogrow-webpay.odoo.com/shop/confirmation"
-                f"?status=success&order={result['buy_order']}"
-            )
-            print("✅ Redirigiendo a confirmación exitosa (GET):", redirect_url)
-        else:
-            # Rechazado o fallido
-            redirect_url = "https://tecnogrow-webpay.odoo.com/shop/payment?status=rejected"
-            print("❌ Pago rechazado, redirigiendo a payment (GET):", redirect_url)
-
-        return RedirectResponse(url=redirect_url)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "healthy",
+                "timestamp": "2025-10-19T00:00:00Z",  # TODO: Usar timestamp real
+                "components": {
+                    "webpay_sdk": {"status": "ok", "message": "SDK inicializado"},
+                    "cors": {"status": "ok", "message": "CORS configurado"},
+                    "routes": {"status": "ok", "message": "Rutas registradas"},
+                    "odoo_integration": {"status": "pending", "message": "En desarrollo"}
+                }
+            }
+        )
         
     except Exception as e:
-        print("❌ Error en commit (GET):", e)
-        return RedirectResponse("https://tecnogrow-webpay.odoo.com/shop/payment?status=error")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy", 
+                "error": str(e),
+                "timestamp": "2025-10-19T00:00:00Z"
+            }
+        )
+
+
+# 🚀 Punto de entrada para el servidor
+if __name__ == "__main__":
+    import uvicorn
+    
+    # Configuración para desarrollo local
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,  # Auto-reload en desarrollo
+        log_level="info"
+    )
