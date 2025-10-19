@@ -29,7 +29,7 @@ options = WebpayOptions(commerce_code, api_key, integration_type)
 
 @app.get("/")
 def index():
-    return {"msg": "Servidor Webpay operativo 🚀 1.0.4"}
+    return {"msg": "Servidor Webpay operativo 🚀 1.0.5"}
 
 
 @app.post("/webpay/init")
@@ -89,9 +89,49 @@ async def webpay_commit(request: Request):
 
 
 @app.get("/webpay/commit")
-async def webpay_cancel(request: Request):
-    """Caso especial: usuario hace clic en “Anular compra y volver”."""
+async def webpay_commit_get(request: Request):
+    """Maneja tanto cancelaciones como pagos exitosos que llegan via GET."""
     params = dict(request.query_params)
-    print("❌ Transacción anulada por el usuario:", params)
+    print("📥 GET /webpay/commit recibido con params:", params)
+    
+    # Verificar si hay token_ws en los parámetros
+    token = params.get("token_ws")
+    
+    if not token:
+        # Si hay TBK_TOKEN pero no token_ws, es una cancelación
+        if "TBK_TOKEN" in params:
+            print("❌ Transacción anulada por el usuario (TBK_TOKEN presente)")
+            return RedirectResponse("https://tecnogrow-webpay.odoo.com/shop/payment?status=cancelled")
+        else:
+            print("⚠️ GET sin token válido")
+            return RedirectResponse("https://tecnogrow-webpay.odoo.com/shop/payment?status=error")
+    
+    # Si hay token_ws, intentar procesar la transacción
+    try:
+        tx = Transaction(options)
+        result = tx.commit(token)
+        print("✅ Resultado commit (GET):", result)
+        print("🔍 Status de la transacción:", result.get("status"))
+        print("🔍 Response code:", result.get("response_code"))
 
-    return RedirectResponse("https://tecnogrow-webpay.odoo.com/shop/payment?status=cancelled")
+        # Verificar AMBOS campos por si acaso
+        status = result.get("status")
+        response_code = result.get("response_code")
+        
+        if status == "AUTHORIZED" or response_code == 0:
+            # Éxito - Pago autorizado
+            redirect_url = (
+                f"https://tecnogrow-webpay.odoo.com/shop/confirmation"
+                f"?status=success&order={result['buy_order']}"
+            )
+            print("✅ Redirigiendo a confirmación exitosa (GET):", redirect_url)
+        else:
+            # Rechazado o fallido
+            redirect_url = "https://tecnogrow-webpay.odoo.com/shop/payment?status=rejected"
+            print("❌ Pago rechazado, redirigiendo a payment (GET):", redirect_url)
+
+        return RedirectResponse(url=redirect_url)
+        
+    except Exception as e:
+        print("❌ Error en commit (GET):", e)
+        return RedirectResponse("https://tecnogrow-webpay.odoo.com/shop/payment?status=error")
