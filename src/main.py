@@ -29,7 +29,7 @@ options = WebpayOptions(commerce_code, api_key, integration_type)
 
 @app.get("/")
 def index():
-    return {"msg": "Servidor Webpay operativo 🚀 1.0.2"}
+    return {"msg": "Servidor Webpay operativo 🚀 1.0.4"}
 
 
 @app.post("/webpay/init")
@@ -62,16 +62,24 @@ async def webpay_commit(request: Request):
     try:
         result = tx.commit(token)
         print("✅ Resultado commit:", result)
+        print("🔍 Status de la transacción:", result.get("status"))
+        print("🔍 Response code:", result.get("response_code"))
 
-        if result.get("response_code") == 0:
-            # Éxito
+        # Verificar AMBOS campos por si acaso
+        status = result.get("status")
+        response_code = result.get("response_code")
+        
+        if status == "AUTHORIZED" or response_code == 0:
+            # Éxito - Pago autorizado
             redirect_url = (
                 f"https://tecnogrow-webpay.odoo.com/shop/confirmation"
                 f"?status=success&order={result['buy_order']}"
             )
+            print("✅ Redirigiendo a confirmación exitosa:", redirect_url)
         else:
-            # Rechazado
+            # Rechazado o fallido
             redirect_url = "https://tecnogrow-webpay.odoo.com/shop/payment?status=rejected"
+            print("❌ Pago rechazado, redirigiendo a payment:", redirect_url)
 
         return RedirectResponse(url=redirect_url)
 
