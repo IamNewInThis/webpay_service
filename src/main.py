@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from transbank.webpay.webpay_plus.transaction import Transaction
 from transbank.common.integration_commerce_codes import IntegrationCommerceCodes
@@ -20,11 +20,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 🔧 Configuración Webpay
 commerce_code = IntegrationCommerceCodes.WEBPAY_PLUS
 api_key = IntegrationApiKeys.WEBPAY
 integration_type = IntegrationType.TEST
-
 options = WebpayOptions(commerce_code, api_key, integration_type)
+
+
+@app.get("/")
+def index():
+    return {"msg": "Servidor Webpay operativo 🚀 1.0.2"}
+
 
 @app.post("/webpay/init")
 async def webpay_init(request: Request):
@@ -33,7 +39,7 @@ async def webpay_init(request: Request):
     buy_order = f"O-{abs(hash(amount)) % 1000000}"
     session_id = f"S-{abs(hash(buy_order)) % 1000000}"
 
-    # ⬇️ Volver a tu backend, no directamente a Odoo
+    # 🔹 Importante: retorno SIEMPRE a tu backend
     return_url = "https://webpay-service.onrender.com/webpay/commit"
 
     tx = Transaction(options)
@@ -41,17 +47,22 @@ async def webpay_init(request: Request):
     print("🔸 Transacción creada:", response)
     return response
 
+
 @app.post("/webpay/commit")
 async def webpay_commit(request: Request):
+    """Caso normal: retorno con token_ws (pago exitoso o rechazado)."""
     form = await request.form()
     token = form.get("token_ws")
     tx = Transaction(options)
+
+    if not token:
+        print("⚠️ No se recibió token_ws (probablemente anulación o expiración)")
+        return RedirectResponse("https://tecnogrow-webpay.odoo.com/shop/payment?status=cancelled")
 
     try:
         result = tx.commit(token)
         print("✅ Resultado commit:", result)
 
-        # ⚙️ Lógica de retorno
         if result.get("response_code") == 0:
             # Éxito
             redirect_url = (
@@ -59,11 +70,20 @@ async def webpay_commit(request: Request):
                 f"?status=success&order={result['buy_order']}"
             )
         else:
-            # Rechazado o anulado
-            redirect_url = "https://tecnogrow-webpay.odoo.com/shop/payment?status=cancelled"
+            # Rechazado
+            redirect_url = "https://tecnogrow-webpay.odoo.com/shop/payment?status=rejected"
 
         return RedirectResponse(url=redirect_url)
 
     except Exception as e:
         print("❌ Error en commit:", e)
         return RedirectResponse("https://tecnogrow-webpay.odoo.com/shop/payment?status=error")
+
+
+@app.get("/webpay/commit")
+async def webpay_cancel(request: Request):
+    """Caso especial: usuario hace clic en “Anular compra y volver”."""
+    params = dict(request.query_params)
+    print("❌ Transacción anulada por el usuario:", params)
+
+    return RedirectResponse("https://tecnogrow-webpay.odoo.com/shop/payment?status=cancelled")
