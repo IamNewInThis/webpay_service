@@ -256,6 +256,170 @@ class OdooSalesService:
             print(f"❌ Error general al actualizar pago: {e}")
             return False
 
+    def register_webpay_transaction(
+        self,
+        order_id: int,
+        order_name: str,
+        amount: float,
+        status: str = "done",
+        payment_data: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        💳 Crea o actualiza una payment.transaction asociada a la orden para que Odoo muestre el pago como completado.
+        """
+        if not self.uid:
+            if not self.authenticate():
+                return False
+
+        try:
+            try:
+                order_ref = int(order_id)
+            except (TypeError, ValueError):
+                print(f"❌ order_id inválido para transacción Webpay: {order_id}")
+                return False
+
+            try:
+                normalized_amount = float(amount)
+            except (TypeError, ValueError):
+                normalized_amount = 0.0
+
+            reference = (
+                payment_data.get("buy_order")
+                if payment_data and payment_data.get("buy_order")
+                else order_name
+            )
+
+            domain = [
+                ["sale_order_id", "=", order_ref],
+                ["provider_code", "=", "webpay"],
+            ]
+
+            search_payload = {
+                "jsonrpc": "2.0",
+                "method": "call",
+                "params": {
+                    "service": "object",
+                    "method": "execute_kw",
+                    "args": [
+                        self.database,
+                        self.uid,
+                        self.password,
+                        "payment.transaction",
+                        "search",
+                        [domain],
+                        {"limit": 1},
+                    ],
+                },
+                "id": 9,
+            }
+
+            search_response = self.session.post(
+                f"{self.odoo_url}/jsonrpc", json=search_payload
+            )
+
+            if not search_response.ok:
+                print(f"❌ Error buscando transacción existente: {search_response.text}")
+                return False
+
+            search_json = search_response.json()
+            existing_ids = search_json.get("result") or []
+
+            tx_vals: Dict[str, Any] = {
+                "amount": normalized_amount,
+                "provider_code": "webpay",
+                "reference": reference,
+                "state": status,
+                "sale_order_id": order_ref,
+            }
+
+            if payment_data:
+                authorization_code = payment_data.get("authorization_code")
+                if authorization_code:
+                    tx_vals["acquirer_reference"] = str(authorization_code)
+                payment_status = payment_data.get("status")
+                if payment_status:
+                    tx_vals["state_message"] = str(payment_status)
+                payment_type = payment_data.get("payment_type_code")
+                if payment_type:
+                    tx_vals["operation"] = str(payment_type)
+
+            if existing_ids:
+                tx_id = existing_ids[0]
+                print(f"ℹ️ Actualizando transacción Webpay existente (ID {tx_id})")
+                write_payload = {
+                    "jsonrpc": "2.0",
+                    "method": "call",
+                    "params": {
+                        "service": "object",
+                        "method": "execute_kw",
+                        "args": [
+                            self.database,
+                            self.uid,
+                            self.password,
+                            "payment.transaction",
+                            "write",
+                            [[tx_id], tx_vals],
+                        ],
+                    },
+                    "id": 10,
+                }
+
+                write_response = self.session.post(
+                    f"{self.odoo_url}/jsonrpc", json=write_payload
+                )
+
+                if write_response.ok and write_response.json().get("result"):
+                    print(
+                        f"✅ Transacción Webpay actualizada para orden {order_name} (ID {tx_id})"
+                    )
+                    return True
+
+                print(
+                    f"⚠️ No se pudo actualizar la transacción Webpay: {write_response.text}"
+                )
+                return False
+
+            print("ℹ️ Creando nueva transacción Webpay en Odoo")
+            create_payload = {
+                "jsonrpc": "2.0",
+                "method": "call",
+                "params": {
+                    "service": "object",
+                    "method": "execute_kw",
+                    "args": [
+                        self.database,
+                        self.uid,
+                        self.password,
+                        "payment.transaction",
+                        "create",
+                        [tx_vals],
+                    ],
+                },
+                "id": 11,
+            }
+
+            create_response = self.session.post(
+                f"{self.odoo_url}/jsonrpc", json=create_payload
+            )
+
+            if create_response.ok:
+                create_json = create_response.json()
+                if create_json.get("result"):
+                    print(
+                        f"✅ Transacción Webpay registrada en Odoo para orden {order_name} (ID {create_json['result']})"
+                    )
+                    return True
+
+                print(f"⚠️ La creación de la transacción no devolvió resultado: {create_json}")
+                return False
+
+            print(f"❌ Error HTTP creando transacción: {create_response.text}")
+            return False
+
+        except Exception as e:
+            print(f"❌ Error registrando transacción Webpay: {e}")
+            return False
+
     def update_order_status_by_name(self, order_name: str, new_status: str) -> bool:
         """
         🔄 Actualiza el estado de una orden de venta según su nombre (S04589)

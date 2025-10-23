@@ -183,7 +183,20 @@ class WebpayService:
         if len(adjusted_buy_order) <= 26:
             return adjusted_buy_order
 
-        # Fallback defensivo: usar hash cuando la combinación siga excediendo límites.
+        # Fallback defensivo: usar hash pero mantener los tres componentes legibles.
         hashed_suffix = abs(hash(base_buy_order)) % 1000000
-        hashed_buy_order = f"w{hashed_suffix}_{date_token[-6:]}"
-        return hashed_buy_order
+        compact_date = date_token[-6:] if len(date_token) >= 6 else date_token
+        hashed_str = str(hashed_suffix)
+        hashed_buy_order = f"w{hashed_str}_{amount}_{compact_date}"
+
+        if len(hashed_buy_order) <= 26:
+            return hashed_buy_order
+
+        overflow = len(hashed_buy_order) - 26
+        if overflow >= len(hashed_str):
+            trimmed_hash = hashed_str[: max(1, len(hashed_str) - 1)]
+        else:
+            trimmed_hash = hashed_str[: len(hashed_str) - overflow]
+
+        adjusted = f"w{trimmed_hash}_{amount}_{compact_date}"
+        return adjusted[:26]
