@@ -1,8 +1,10 @@
+# src/routes/odoo_routes.py
 """
 📦 Rutas de integración con Odoo
 ================================
 Define endpoints para interactuar con el ERP Odoo.
 Permite consultar órdenes, actualizar estados y sincronizar datos.
+Crecion de payments
 """
 
 from fastapi import APIRouter, HTTPException, Query
@@ -146,3 +148,67 @@ async def check_odoo_connection() -> Dict[str, Any]:
             "connected": False,
             "error": str(e)
         }
+
+class PaymentCreateRequest(BaseModel):
+    """🧾 Modelo para crear transacciones de pago manuales"""
+    order_id: int
+    order_name: str
+    amount: float
+    status: Optional[str] = "done"
+    payment_data: Optional[Dict[str, Any]] = None
+
+
+@odoo_router.post("/payments/create")
+async def create_payment_transaction(data: PaymentCreateRequest) -> Dict[str, Any]:
+    """
+    💳 Crea una transacción de pago en Odoo manualmente (modo Odoo Online).
+    Incluye automáticamente el partner_id desde la orden.
+
+    Request body:
+    - order_id: ID de la orden (int)
+    - order_name: Nombre de la orden (string)
+    - amount: Monto del pago
+    - status: Estado del pago (por defecto "done")
+    - payment_data: Información adicional (opcional)
+    """
+    try:
+        if not odoo_service.uid:
+            odoo_service.authenticate()
+
+        order = odoo_service.get_order_by_id(data.order_id)
+        if not order:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Orden {data.order_id} no encontrada en Odoo",
+            )
+
+        payment_payload = data.payment_data or {}
+        tx_status = data.status or "done"
+
+        success = odoo_service.register_webpay_transaction(
+            order_id=data.order_id,
+            order_name=order["name"],
+            amount=data.amount,
+            status=tx_status,
+            payment_data=payment_payload,
+            order_data=order,
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail=f"No se pudo crear la transacción para la orden {order['name']}",
+            )
+
+        return {
+            "success": True,
+            "message": f"Transacción Webpay registrada para la orden {order['name']}",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error creando transacción de pago: {str(e)}",
+        )
