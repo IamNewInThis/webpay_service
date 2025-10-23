@@ -96,6 +96,10 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
         if webpay_service.is_transaction_successful(result):
             # Intentar encontrar y actualizar la orden correspondiente en Odoo
             await _process_successful_payment(result)
+
+            # Buscar la orden en Odoo con find_order_by_criteria
+
+            # Despues de obtenerla marcar el estado como 'sale'
             
             redirect_url = (
                 f"https://tecnogrow-webpay.odoo.com/shop/confirmation"
@@ -188,17 +192,24 @@ async def _process_successful_payment(payment_result: Dict[str, Any]) -> None:
         payment_result: Resultado de la transacción de Webpay
     """
     try:
-        buy_order = payment_result.get("buy_order", "")
-        amount = payment_result.get("amount", 0)
+        buy_order = payment_result.get("buy_order", "") or ""
+        raw_amount = payment_result.get("amount", 0)
+        try:
+            amount = int(float(raw_amount))
+        except (TypeError, ValueError):
+            amount = 0
         
         # Extraer datos del buy_order (formato: {customer_name}_{amount}_{date})
         parts = buy_order.split("_")
         if len(parts) >= 3:
-            customer_name = parts[0].replace("-", " ")  # Reconvertir espacios
+            customer_name = parts[0].replace("-", " ").title()  # Reconvertir espacios
             order_date = parts[2]  # Formato YYYYMMDD
             
             # Convertir fecha a formato YYYY-MM-DD
-            formatted_date = f"{order_date[:4]}-{order_date[4:6]}-{order_date[6:8]}"
+            try:
+                formatted_date = datetime.strptime(order_date, "%Y%m%d").strftime("%Y-%m-%d")
+            except ValueError:
+                formatted_date = datetime.utcnow().strftime("%Y-%m-%d")
             
             print(f"🔍 Buscando orden en Odoo - Cliente: {customer_name}, Monto: {amount}, Fecha: {formatted_date}")
             

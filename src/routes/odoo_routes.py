@@ -10,12 +10,17 @@ Crecion de payments
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Dict, Any, Optional
 from src.services.odoo_sales import OdooSalesService
+from pydantic import BaseModel
 
 # Crear router para agrupar las rutas de Odoo
 odoo_router = APIRouter(prefix="/odoo", tags=["odoo"])
 
 # Instanciar el servicio de Odoo
 odoo_service = OdooSalesService()
+
+class OrderStatusUpdate(BaseModel):
+    """📝 Modelo para actualización de estado de orden"""
+    status: str
 
 @odoo_router.get("/orders/search")
 async def search_orders(
@@ -106,8 +111,40 @@ async def get_order_details(order_id: int) -> Dict[str, Any]:
             detail=f"Error obteniendo orden {order_id}: {str(e)}"
         )
 
-# TODO metodo put para modificar el estado de la sale.order
+@odoo_router.put("/orders/{order_identifier}/status")
+async def update_order_status(order_identifier: str, status_data: OrderStatusUpdate) -> Dict[str, Any]:
+    """
+    🔄 Actualiza el estado de una orden (por ID o por código)
+    """
+    try:
+        # Detectar si el identificador es numérico o código de orden
+        if order_identifier.isdigit():
+            order_id = int(order_identifier)
+            updated = odoo_service.update_order_payment_status(order_id, {
+                "buy_order": f"Manual_Update_{order_id}",
+                "status": status_data.status,
+            })
+        else:
+            updated = odoo_service.update_order_status_by_name(order_identifier, status_data.status)
 
+        if not updated:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Orden '{order_identifier}' no encontrada o no se pudo actualizar",
+            )
+
+        return {
+            "success": True,
+            "message": f"Estado de la orden '{order_identifier}' actualizado a '{status_data.status}'",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error actualizando orden '{order_identifier}': {str(e)}",
+        )
 
 @odoo_router.get("/health")
 async def check_odoo_connection() -> Dict[str, Any]:

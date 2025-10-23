@@ -155,25 +155,81 @@ class OdooSalesService:
         except Exception as e:
             print(f"❌ Error buscando orden: {str(e)}")
             return None
-    
+
     def update_order_payment_status(self, order_id: int, payment_data: Dict[str, Any]) -> bool:
         """
         💳 Actualiza el estado de pago de una orden específica
-        
-        Args:
-            order_id: ID de la orden en Odoo
-            payment_data: Datos del pago (buy_order, amount, status, etc.)
-            
-        Returns:
-            True si la actualización fue exitosa
+        Intenta confirmar la orden; si Odoo lanza UserError por stock, fuerza el estado 'sale'.
         """
         if not self.uid:
             if not self.authenticate():
                 return False
-        
+
         try:
-            # Actualizar la orden para marcarla como pagada
-            update_payload = {
+            print(f"💳 Intentando confirmar orden {order_id} con datos de pago...")
+
+            # === 1️⃣ Intentar confirmar la orden ===
+            confirm_payload = {
+                "jsonrpc": "2.0",
+                "method": "call",
+                "params": {
+                    "service": "object",
+                    "method": "execute_kw",
+                    "args": [
+                        self.database, self.uid, self.password,
+                        "sale.order", "action_confirm",
+                        [[order_id]]
+                    ]
+                },
+                "id": 4
+            }
+
+            confirm_response = self.session.post(f"{self.odoo_url}/jsonrpc", json=confirm_payload)
+            confirm_result = confirm_response.json()
+
+            # === 2️⃣ Si hay error (stock o rutas), forzamos el estado manualmente ===
+            if "error" in confirm_result:
+                error_block = confirm_result.get("error", {})
+                error_msg = error_block.get("message") or ""
+                data_block = error_block.get("data") or {}
+                detailed_msg = ""
+                if isinstance(data_block, dict):
+                    detailed_msg = data_block.get("message") or data_block.get("debug") or ""
+                combined_error_msg = f"{error_msg} - {detailed_msg}" if detailed_msg else error_msg
+                print(f"⚠️ Error confirmando orden {order_id}: {combined_error_msg}")
+
+                normalized_msg = combined_error_msg.lower()
+                stock_keywords = ("reabastecimiento", "stock", "no se encontró", "no se encontro")
+
+                # Si el error proviene de stock/rules => forzar estado sale
+                if any(keyword in normalized_msg for keyword in stock_keywords):
+                    print("🔁 Forzando estado 'sale' por error de stock...")
+                    force_payload = {
+                        "jsonrpc": "2.0",
+                        "method": "call",
+                        "params": {
+                            "service": "object",
+                            "method": "execute_kw",
+                            "args": [
+                                self.database, self.uid, self.password,
+                                "sale.order", "write",
+                                [[order_id], {"state": "sale"}]
+                            ]
+                        },
+                        "id": 5
+                    }
+                    force_response = self.session.post(f"{self.odoo_url}/jsonrpc", json=force_payload)
+                    force_json = force_response.json() if force_response.ok else {}
+                    if force_json.get("result"):
+                        print(f"✅ Orden {order_id} forzada a estado 'sale'")
+                    else:
+                        print(f"⚠️ No se pudo forzar el estado manualmente: {force_json}")
+                        return False
+                else:
+                    return False
+
+            # === 3️⃣ Registrar nota del pago ===
+            note_payload = {
                 "jsonrpc": "2.0",
                 "method": "call",
                 "params": {
@@ -182,28 +238,19 @@ class OdooSalesService:
                     "args": [
                         self.database, self.uid, self.password,
                         "sale.order", "write",
-                        [[order_id]],  # IDs a actualizar
-                        {
-                            "state": "sale",  # Cambiar estado a 'sale' (confirmada)
-                            # Agregar nota sobre el pago
-                            "note": f"Pago procesado vía Webpay - Orden: {payment_data.get('buy_order', 'N/A')}"
-                        }
+                        [
+                            [order_id],
+                            {"note": f"Pago procesado vía Webpay - Orden: {payment_data.get('buy_order', 'N/A')}"}
+                        ]
                     ]
                 },
-                "id": 4
+                "id": 6
             }
-            
-            print(f"💳 Actualizando orden {order_id} con datos de pago...")
-            response = self.session.post(f"{self.odoo_url}/jsonrpc", json=update_payload)
-            
-            if response.ok:
-                result = response.json()
-                if "result" in result and result["result"]:
-                    print(f"✅ Orden {order_id} actualizada exitosamente")
-                    return True
-                else:
-                    print(f"❌ Error actualizando orden: {result.get('error', 'Error desconocido')}")
-                    return False
+
+            note_response = self.session.post(f"{self.odoo_url}/jsonrpc", json=note_payload)
+            note_json = note_response.json() if note_response.ok else {}
+            if note_json.get("result"):
+                print(f"✅ Nota de pago agregada a orden {order_id}")
             else:
                 print(f"⚠️ No se pudo registrar la nota de pago: {note_json}")
             return True
@@ -453,7 +500,250 @@ class OdooSalesService:
         except Exception as e:
             print(f"❌ Error actualizando estado de orden {order_name}: {e}")
             return False
-    
+
+    def register_webpay_transaction(
+        self,
+        order_id: int,
+        order_name: str,
+        amount: float,
+        status: str = "done",
+        payment_data: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        💳 Registra o actualiza una transacción de pago Webpay asociada a una orden.
+        Compatible con Odoo Online (usa provider 'none').
+        """
+        if not self.uid:
+            if not self.authenticate():
+                return False
+
+        try:
+            # --- Normalización de datos ---
+            try:
+                order_ref = int(order_id)
+            except (TypeError, ValueError):
+                print(f"❌ order_id inválido para transacción Webpay: {order_id}")
+                return False
+
+            try:
+                normalized_amount = float(amount)
+            except (TypeError, ValueError):
+                normalized_amount = 0.0
+
+            reference = (
+                payment_data.get("buy_order")
+                if payment_data and payment_data.get("buy_order")
+                else order_name
+            )
+
+            # --- Buscar transacción existente ---
+            domain = [
+                ["sale_order_id", "=", order_ref],
+                ["provider_code", "=", "webpay"],
+            ]
+
+            search_payload = {
+                "jsonrpc": "2.0",
+                "method": "call",
+                "params": {
+                    "service": "object",
+                    "method": "execute_kw",
+                    "args": [
+                        self.database,
+                        self.uid,
+                        self.password,
+                        "payment.transaction",
+                        "search",
+                        [domain],
+                        {"limit": 1},
+                    ],
+                },
+                "id": 9,
+            }
+
+            search_response = self.session.post(
+                f"{self.odoo_url}/jsonrpc", json=search_payload
+            )
+
+            if not search_response.ok:
+                print(f"❌ Error buscando transacción existente: {search_response.text}")
+                return False
+
+            search_json = search_response.json()
+            existing_ids = search_json.get("result") or []
+
+            # --- Datos base de la transacción ---
+            tx_vals: Dict[str, Any] = {
+                "amount": normalized_amount,
+                "provider_code": "webpay",
+                "reference": reference,
+                "state": status,
+                "sale_order_id": order_ref,
+            }
+
+            # --- Enriquecer con datos Webpay (opcional) ---
+            if payment_data:
+                authorization_code = payment_data.get("authorization_code")
+                if authorization_code:
+                    tx_vals["acquirer_reference"] = str(authorization_code)
+                payment_status = payment_data.get("status")
+                if payment_status:
+                    tx_vals["state_message"] = str(payment_status)
+                payment_type = payment_data.get("payment_type_code")
+                if payment_type:
+                    tx_vals["operation"] = str(payment_type)
+
+            # --- Si ya existe, actualiza ---
+            if existing_ids:
+                tx_id = existing_ids[0]
+                print(f"ℹ️ Actualizando transacción Webpay existente (ID {tx_id})")
+                write_payload = {
+                    "jsonrpc": "2.0",
+                    "method": "call",
+                    "params": {
+                        "service": "object",
+                        "method": "execute_kw",
+                        "args": [
+                            self.database,
+                            self.uid,
+                            self.password,
+                            "payment.transaction",
+                            "write",
+                            [[tx_id], tx_vals],
+                        ],
+                    },
+                    "id": 10,
+                }
+
+                write_response = self.session.post(
+                    f"{self.odoo_url}/jsonrpc", json=write_payload
+                )
+
+                if write_response.ok and write_response.json().get("result"):
+                    print(f"✅ Transacción Webpay actualizada para orden {order_name} (ID {tx_id})")
+                    return True
+
+                print(f"⚠️ No se pudo actualizar la transacción Webpay: {write_response.text}")
+                return False
+
+            # --- Crear nueva transacción (modo Odoo Online) ---
+            print("ℹ️ Creando nueva transacción Webpay en Odoo (modo Odoo Online)")
+
+            # Buscar provider 'none' (único permitido en Odoo Online)
+            provider_search_payload = {
+                "jsonrpc": "2.0",
+                "method": "call",
+                "params": {
+                    "service": "object",
+                    "method": "execute_kw",
+                    "args": [
+                        self.database,
+                        self.uid,
+                        self.password,
+                        "payment.provider",
+                        "search",
+                        [[["code", "=", "none"]]],
+                        {"limit": 1},
+                    ],
+                },
+                "id": 10,
+            }
+
+            provider_response = self.session.post(
+                f"{self.odoo_url}/jsonrpc", json=provider_search_payload
+            )
+            provider_json = provider_response.json()
+            provider_ids = provider_json.get("result") or []
+
+            if not provider_ids:
+                print("⚠️ No se encontró provider 'none', usando fallback ID 1 (si existe)")
+                provider_id = 1
+            else:
+                provider_id = provider_ids[0]
+
+            # Agregar provider_id obligatorio
+            tx_vals["provider_id"] = provider_id
+
+            # Crear la transacción
+            create_payload = {
+                "jsonrpc": "2.0",
+                "method": "call",
+                "params": {
+                    "service": "object",
+                    "method": "execute_kw",
+                    "args": [
+                        self.database,
+                        self.uid,
+                        self.password,
+                        "payment.transaction",
+                        "create",
+                        [tx_vals],
+                    ],
+                },
+                "id": 11,
+            }
+
+            create_response = self.session.post(
+                f"{self.odoo_url}/jsonrpc", json=create_payload
+            )
+
+            if create_response.ok:
+                create_json = create_response.json()
+                if create_json.get("result"):
+                    print(
+                        f"✅ Transacción Webpay registrada en Odoo para orden {order_name} (ID {create_json['result']})"
+                    )
+                    return True
+
+                print(f"⚠️ La creación de la transacción no devolvió resultado: {create_json}")
+                return False
+
+            print(f"❌ Error HTTP creando transacción: {create_response.text}")
+            return False
+
+        except Exception as e:
+            print(f"❌ Error registrando transacción Webpay: {e}")
+        return False
+
+    def update_order_status_by_name(self, order_name: str, new_status: str) -> bool:
+        """
+        🔄 Actualiza el estado de una orden de venta según su nombre (S04589)
+        """
+        try:
+            models = self.models
+            domain = [('name', '=', order_name)]
+            order_ids = models.execute_kw(
+                self.db, self.uid, self.password,
+                'sale.order', 'search',
+                [domain], {'limit': 1}
+            )
+            if not order_ids:
+                return False
+
+            # 🔹 Determinar qué método ejecutar según el estado solicitado
+            if new_status == 'sale':
+                method = 'action_confirm'
+            elif new_status == 'cancel':
+                method = 'action_cancel'
+            elif new_status in ['draft', 'sent']:
+                method = 'action_draft'
+            else:
+                print(f"⚠️ Estado '{new_status}' no soportado.")
+                return False
+
+            models.execute_kw(
+                self.db, self.uid, self.password,
+                'sale.order', method,
+                [order_ids]
+            )
+            print(f"✅ Orden {order_name} actualizada con método {method}")
+            return True
+
+        except Exception as e:
+            print(f"❌ Error actualizando estado de orden {order_name}: {e}")
+            return False
+
+
     def get_order_by_id(self, order_id: int) -> Optional[Dict[str, Any]]:
         """
         📄 Obtiene una orden específica por su ID
@@ -526,5 +816,63 @@ class OdooSalesService:
         except Exception as e:
             print(f"❌ Error obteniendo orden: {str(e)}")
             return None
+    
+    def get_recent_orders(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        📋 Obtiene las órdenes más recientes
+        
+        Args:
+            limit: Número máximo de órdenes a obtener
+            
+        Returns:
+            Lista de órdenes recientes
+        """
+        if not self.uid:
+            if not self.authenticate():
+                return []
+        
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "service": "object",
+                "method": "execute_kw",
+                "args": [
+                    self.database, self.uid, self.password,
+                    "sale.order", "search_read",
+                    [[]],  # Sin filtros (todas las órdenes)
+                    {
+                        "fields": [
+                            "id", "name", "state", "amount_total", 
+                            "partner_id", "date_order", "invoice_status"
+                        ],
+                        "limit": limit,
+                        "order": "date_order desc"  # Más recientes primero
+                    }
+                ]
+            },
+            "id": 8
+        }
+        
+        try:
+            print(f"📋 Obteniendo {limit} órdenes recientes...")
+            response = self.session.post(f"{self.odoo_url}/jsonrpc", json=payload)
+            
+            if response.ok:
+                result = response.json()
+                if "result" in result and result["result"]:
+                    orders = result["result"]
+                    print(f"✅ {len(orders)} órdenes obtenidas")
+                    return orders
+                else:
+                    print("⚠️ Sin órdenes encontradas")
+                    return []
+            else:
+                print(f"❌ Error obteniendo órdenes: {response.status_code}")
+                return []
+                
+        except Exception as e:
+            print(f"❌ Error listando órdenes: {str(e)}")
+            return []
     
    
