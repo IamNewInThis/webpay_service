@@ -452,6 +452,7 @@ class OdooSalesService:
                 )
 
                 if write_response.ok and write_response.json().get("result"):
+                    self._link_transaction_to_order(order_ref, tx_id)
                     print(f"✅ Transacción Webpay actualizada para orden {order_name} (ID {tx_id})")
                     return True
 
@@ -488,6 +489,7 @@ class OdooSalesService:
                 create_json = create_response.json()
                 tx_id = create_json.get("result")
                 if tx_id:
+                    self._link_transaction_to_order(order_ref, tx_id)
                     print(
                         f"✅ Transacción Webpay registrada en Odoo para orden {order_name} (ID {tx_id})"
                     )
@@ -502,6 +504,39 @@ class OdooSalesService:
         except Exception as e:
             print(f"❌ Error registrando transacción Webpay: {e}")
             return False
+
+    def _link_transaction_to_order(self, order_id: int, transaction_id: int) -> None:
+        """
+        Asocia la payment.transaction a la sale.order para que Odoo muestre la confirmación correcta.
+        """
+        try:
+            payload = {
+                "jsonrpc": "2.0",
+                "method": "call",
+                "params": {
+                    "service": "object",
+                    "method": "execute_kw",
+                    "args": [
+                        self.database,
+                        self.uid,
+                        self.password,
+                        "sale.order",
+                        "write",
+                        [[order_id], {"transaction_ids": [(4, transaction_id)]}],
+                    ],
+                },
+                "id": 12,
+            }
+
+            response = self.session.post(f"{self.odoo_url}/jsonrpc", json=payload)
+            if response.ok and response.json().get("result"):
+                print(f"🔗 Transacción {transaction_id} enlazada con orden {order_id}")
+            else:
+                print(
+                    f"⚠️ No se pudo enlazar transacción {transaction_id} a orden {order_id}: {response.text}"
+                )
+        except Exception as e:
+            print(f"⚠️ Error enlazando transacción {transaction_id} con orden {order_id}: {e}")
 
     def get_order_by_id(self, order_id: int) -> Optional[Dict[str, Any]]:
         """
