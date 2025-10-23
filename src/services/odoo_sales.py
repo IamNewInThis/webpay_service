@@ -265,13 +265,15 @@ class OdooSalesService:
         payment_data: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
-        💳 Crea o actualiza una payment.transaction asociada a la orden para que Odoo muestre el pago como completado.
+        💳 Registra o actualiza una transacción de pago Webpay asociada a una orden.
+        Compatible con Odoo Online (usa provider 'none').
         """
         if not self.uid:
             if not self.authenticate():
                 return False
 
         try:
+            # --- Normalización de datos ---
             try:
                 order_ref = int(order_id)
             except (TypeError, ValueError):
@@ -289,6 +291,7 @@ class OdooSalesService:
                 else order_name
             )
 
+            # --- Buscar transacción existente ---
             domain = [
                 ["sale_order_id", "=", order_ref],
                 ["provider_code", "=", "webpay"],
@@ -324,6 +327,7 @@ class OdooSalesService:
             search_json = search_response.json()
             existing_ids = search_json.get("result") or []
 
+            # --- Datos base de la transacción ---
             tx_vals: Dict[str, Any] = {
                 "amount": normalized_amount,
                 "provider_code": "webpay",
@@ -332,6 +336,7 @@ class OdooSalesService:
                 "sale_order_id": order_ref,
             }
 
+            # --- Enriquecer con datos Webpay (opcional) ---
             if payment_data:
                 authorization_code = payment_data.get("authorization_code")
                 if authorization_code:
@@ -343,6 +348,7 @@ class OdooSalesService:
                 if payment_type:
                     tx_vals["operation"] = str(payment_type)
 
+            # --- Si ya existe, actualiza ---
             if existing_ids:
                 tx_id = existing_ids[0]
                 print(f"ℹ️ Actualizando transacción Webpay existente (ID {tx_id})")
@@ -369,17 +375,51 @@ class OdooSalesService:
                 )
 
                 if write_response.ok and write_response.json().get("result"):
-                    print(
-                        f"✅ Transacción Webpay actualizada para orden {order_name} (ID {tx_id})"
-                    )
+                    print(f"✅ Transacción Webpay actualizada para orden {order_name} (ID {tx_id})")
                     return True
 
-                print(
-                    f"⚠️ No se pudo actualizar la transacción Webpay: {write_response.text}"
-                )
+                print(f"⚠️ No se pudo actualizar la transacción Webpay: {write_response.text}")
                 return False
 
-            print("ℹ️ Creando nueva transacción Webpay en Odoo")
+            # --- Crear nueva transacción (modo Odoo Online) ---
+            print("ℹ️ Creando nueva transacción Webpay en Odoo (modo Odoo Online)")
+
+            # Buscar provider 'none' (único permitido en Odoo Online)
+            provider_search_payload = {
+                "jsonrpc": "2.0",
+                "method": "call",
+                "params": {
+                    "service": "object",
+                    "method": "execute_kw",
+                    "args": [
+                        self.database,
+                        self.uid,
+                        self.password,
+                        "payment.provider",
+                        "search",
+                        [[["code", "=", "none"]]],
+                        {"limit": 1},
+                    ],
+                },
+                "id": 10,
+            }
+
+            provider_response = self.session.post(
+                f"{self.odoo_url}/jsonrpc", json=provider_search_payload
+            )
+            provider_json = provider_response.json()
+            provider_ids = provider_json.get("result") or []
+
+            if not provider_ids:
+                print("⚠️ No se encontró provider 'none', usando fallback ID 1 (si existe)")
+                provider_id = 1
+            else:
+                provider_id = provider_ids[0]
+
+            # Agregar provider_id obligatorio
+            tx_vals["provider_id"] = provider_id
+
+            # Crear la transacción
             create_payload = {
                 "jsonrpc": "2.0",
                 "method": "call",
@@ -418,7 +458,7 @@ class OdooSalesService:
 
         except Exception as e:
             print(f"❌ Error registrando transacción Webpay: {e}")
-            return False
+        return False
 
     def update_order_status_by_name(self, order_name: str, new_status: str) -> bool:
         """
