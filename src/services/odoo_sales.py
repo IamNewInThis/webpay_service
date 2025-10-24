@@ -401,7 +401,7 @@ class OdooSalesService:
                 "reference": reference,
                 "state": status,
                 "payment_method_id": payment_method_id,
-                "pos_processed": True,
+                "is_post_processed": True,
             }
 
             if partner_id:
