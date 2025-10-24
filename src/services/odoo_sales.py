@@ -338,7 +338,7 @@ class OdooSalesService:
                 }
             )
 
-            reference = payment_data.get("buy_order") or order_name
+            reference = order_name
 
             order_info = order_data or self.get_order_by_id(order_ref)
             if not order_info:
@@ -401,28 +401,39 @@ class OdooSalesService:
                 "reference": reference,
                 "state": status,
                 "payment_method_id": payment_method_id,
+                "pos_processed": True,
             }
 
             if partner_id:
                 tx_vals["partner_id"] = partner_id
             if partner_name:
                 tx_vals["partner_name"] = partner_name
+            
+            # 💰 Currency_id es obligatorio - usar de la orden o valor por defecto
             if currency_id:
                 tx_vals["currency_id"] = currency_id
+            else:
+                # Fallback: usar CLP (peso chileno) como moneda por defecto
+                print("⚠️ currency_id no encontrado en orden, usando CLP por defecto")
+                clp_currency_id = self._get_clp_currency_id()
+                if clp_currency_id:
+                    tx_vals["currency_id"] = clp_currency_id
+                else:
+                    # Último recurso: usar ID 1 (usualmente USD en instalaciones base)
+                    print("⚠️ No se pudo obtener CLP, usando currency_id=1 por defecto")
+                    tx_vals["currency_id"] = 1
+                    
             if company_id:
                 tx_vals["company_id"] = company_id
 
             authorization_code = payment_data.get("authorization_code")
+            session_id = payment_data.get("session_id") or payment_data.get("buy_order")
+            
             if authorization_code:
                 tx_vals["provider_reference"] = str(authorization_code)
             payment_status = payment_data.get("status")
             if payment_status:
                 tx_vals["state_message"] = str(payment_status)
-            
-            # � Omitimos el campo 'operation' ya que causa errores de validación en Odoo
-            # payment_type = payment_data.get("payment_type_code")
-            # if payment_type:
-            #     tx_vals["operation"] = str(payment_type)  # Esto causa ValueError
             
             response_code = payment_data.get("response_code")
             if response_code is not None:
@@ -540,6 +551,53 @@ class OdooSalesService:
                 )
         except Exception as e:
             print(f"⚠️ Error enlazando transacción {transaction_id} con orden {order_id}: {e}")
+
+    def _get_clp_currency_id(self) -> Optional[int]:
+        """
+        💰 Obtiene el ID de la moneda CLP (peso chileno) desde Odoo
+        
+        Returns:
+            ID de la moneda CLP o None si no se encuentra
+        """
+        if not self.uid:
+            if not self.authenticate():
+                return None
+        
+        try:
+            payload = {
+                "jsonrpc": "2.0",
+                "method": "call",
+                "params": {
+                    "service": "object",
+                    "method": "execute_kw",
+                    "args": [
+                        self.database, self.uid, self.password,
+                        "res.currency", "search",
+                        [[["name", "=", "CLP"]]],
+                        {"limit": 1}
+                    ]
+                },
+                "id": 13
+            }
+            
+            response = self.session.post(f"{self.odoo_url}/jsonrpc", json=payload)
+            if response.ok:
+                result = response.json()
+                currency_ids = result.get("result", [])
+                if currency_ids:
+                    clp_id = currency_ids[0]
+                    print(f"💰 Moneda CLP encontrada con ID: {clp_id}")
+                    return clp_id
+                else:
+                    print("⚠️ Moneda CLP no encontrada en Odoo")
+                    return None
+            else:
+                print(f"❌ Error buscando moneda CLP: {response.text}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ Error obteniendo moneda CLP: {str(e)}")
+            return None
 
     def get_order_by_id(self, order_id: int) -> Optional[Dict[str, Any]]:
         """
