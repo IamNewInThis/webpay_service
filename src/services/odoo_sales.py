@@ -419,22 +419,10 @@ class OdooSalesService:
             if payment_status:
                 tx_vals["state_message"] = str(payment_status)
             
-            # 🔧 Mapeo de códigos de operación Webpay a valores válidos de Odoo
-            payment_type = payment_data.get("payment_type_code")
-            if payment_type:
-                # Mapear códigos Webpay a valores aceptados por Odoo
-                operation_mapping = {
-                    "VN": "online",      # Venta Normal → online
-                    "VD": "validation",  # Venta con Descuento → validation  
-                    "SI": "online",      # Sin Interés → online
-                    "CI": "online",      # Con Interés → online
-                    "NC": "refund",      # Nota de Crédito → refund
-                    "VP": "online",      # Venta con Puntos → online
-                }
-                
-                mapped_operation = operation_mapping.get(str(payment_type), "online")
-                tx_vals["operation"] = mapped_operation
-                print(f"🔧 Mapeando payment_type '{payment_type}' → operation '{mapped_operation}'")
+            # � Omitimos el campo 'operation' ya que causa errores de validación en Odoo
+            # payment_type = payment_data.get("payment_type_code")
+            # if payment_type:
+            #     tx_vals["operation"] = str(payment_type)  # Esto causa ValueError
             
             response_code = payment_data.get("response_code")
             if response_code is not None:
