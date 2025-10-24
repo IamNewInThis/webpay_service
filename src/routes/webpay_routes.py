@@ -229,32 +229,34 @@ async def _process_successful_payment(payment_result: Dict[str, Any]) -> None:
                 
                 if success:
                     print(f"✅ Orden {order['name']} actualizada exitosamente en Odoo")
+                    
+                    # 💳 Registrar transacción Webpay en Odoo
+                    tx_status = (
+                        "done"
+                        if payment_result.get("status") == "AUTHORIZED"
+                        or payment_result.get("response_code") == 0
+                        else "error"
+                    )
+                    
+                    registered = odoo_service.register_webpay_transaction(
+                        order_id=order["id"],
+                        order_name=order["name"],
+                        amount=amount,
+                        status=tx_status,
+                        payment_data=payment_result,
+                        order_data=order,
+                    )
+
+                    if registered:
+                        print(
+                            f"✅ Transacción Webpay registrada para orden {order['name']} con estado {tx_status}"
+                        )
+                    else:
+                        print(
+                            f"⚠️ No se pudo registrar la transacción Webpay para orden {order['name']}"
+                        )
                 else:
                     print(f"❌ Error actualizando orden {order['name']} en Odoo")
-
-                tx_status = (
-                    "done"
-                    if payment_result.get("status") == "AUTHORIZED"
-                    or payment_result.get("response_code") == 0
-                    else "error"
-                )
-                registered = odoo_service.register_webpay_transaction(
-                    order_id=order["id"],
-                    order_name=order["name"],
-                    amount=amount,
-                    status=tx_status,
-                    payment_data=payment_result,
-                    order_data=order,
-                )
-
-                if registered:
-                    print(
-                        f"✅ Transacción Webpay registrada para orden {order['name']} con estado {tx_status}"
-                    )
-                else:
-                    print(
-                        f"⚠️ No se pudo registrar la transacción Webpay para orden {order['name']}"
-                    )
             else:
                 print("⚠️ No se encontró orden correspondiente en Odoo")
         else:
