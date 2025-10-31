@@ -327,8 +327,8 @@ class OdooSalesService:
                 normalized_amount = 0.0
 
             payment_data = payment_data or {}
-            provider_id = 22  # Provider Webpay configurado en Odoo
-            payment_method_id = 217  # Método de pago Webpay configurado en Odoo
+            provider_id = 25  # Provider Webpay configurado en Odoo
+            payment_method_id = 211  # Método de pago Webpay configurado en Odoo
             provider_code = payment_data.get("provider_code") or "webpay"
             payment_data.update(
                 {
