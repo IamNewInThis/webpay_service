@@ -23,6 +23,11 @@ class OdooSalesService:
     - Autenticación con credenciales
     - Búsqueda y actualización de órdenes de venta
     - Sincronización de estados de pago
+    
+    🔒 Seguridad para Odoo Online:
+    - Todas las claves sensibles (API_KEY, HMAC_SECRET) se mantienen en el middleware
+    - Las credenciales de Odoo se usan solo para JSON-RPC
+    - Token interno opcional para auditoría de requests
     """
     
     def __init__(self):
@@ -31,6 +36,7 @@ class OdooSalesService:
         self.database = os.getenv("ODOO_DATABASE")
         self.username = os.getenv("ODOO_USERNAME")
         self.password = os.getenv("ODOO_PASSWORD")
+        self.internal_token = os.getenv("INTERNAL_TOKEN", "")
         
         self.uid = None  # Se establecerá después de autenticar
         self.session = requests.Session()

@@ -3,12 +3,23 @@
 ==================
 Define todos los endpoints relacionados con transacciones de Webpay Plus.
 Maneja inicialización, confirmación y cancelación de transacciones.
+
+🔒 Seguridad (Arquitectura Odoo Online):
+- /init requiere ORIGEN VÁLIDO (dominio Odoo autorizado) - llamado desde frontend
+- /commit (GET/POST) no requiere autenticación (llamado por Transbank)
+
+⚠️ IMPORTANTE: En Odoo Online no puedes agregar endpoints backend ni guardar secretos.
+   Todo el control de seguridad se hace en este middleware, que:
+   1. Valida que las llamadas vengan del dominio Odoo autorizado
+   2. Gestiona las claves API de Webpay de forma segura
+   3. Actualiza Odoo vía JSON-RPC con credenciales seguras
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from fastapi.responses import RedirectResponse
 from src.services.webpay_service import WebpayService
 from src.services.odoo_sales import OdooSalesService
+from src.security import verify_api_key, verify_frontend_request
 from typing import Dict, Any
 from datetime import datetime
 
@@ -21,12 +32,21 @@ odoo_service = OdooSalesService()
 
 
 @webpay_router.post("/init")
-async def init_webpay_transaction(request: Request) -> Dict[str, Any]:
+async def init_webpay_transaction(
+    request: Request,
+    validation: Dict[str, Any] = Depends(verify_frontend_request)
+) -> Dict[str, Any]:
     """
     🚀 Inicializa una nueva transacción Webpay
     
-    Recibe los datos del pago desde el frontend y crea una transacción
-    en el sistema de Webpay Plus de Transbank.
+    🔒 Seguridad: Valida que el request venga del dominio Odoo autorizado
+    
+    Este endpoint es llamado desde el frontend de Odoo (JavaScript).
+    NO requiere API Key porque el frontend no puede guardar secretos de forma segura.
+    En su lugar, validamos que el origen sea un dominio Odoo autorizado.
+    
+    Headers opcionales (recomendados):
+        X-Timestamp: Timestamp unix para prevenir replay attacks
     
     Body esperado:
     {
@@ -48,7 +68,8 @@ async def init_webpay_transaction(request: Request) -> Dict[str, Any]:
         customer_name = data.get("customer_name", "Cliente")
         order_date = data.get("order_date")
         
-        print(f"💳 Iniciando transacción - Cliente: {customer_name}, Monto: ${amount}")
+        print(f"💳 Iniciando transacción desde origen: {validation.get('origin')}")
+        print(f"   Cliente: {customer_name}, Monto: ${amount}")
         
         # Crear transacción usando el servicio
         response = webpay_service.create_transaction(

@@ -44,6 +44,11 @@ ODOO_DATABASE=tu_base_de_datos
 ODOO_USERNAME=tu_usuario
 ODOO_PASSWORD=tu_contraseña
 
+# 🔒 Configuración de seguridad
+API_KEY=tu-api-key-segura-aqui
+HMAC_SECRET=tu-secreto-hmac-super-seguro-aqui
+TIMESTAMP_TOLERANCE=300
+
 # 🌐 Configuración del servicio
 SERVICE_BASE_URL=https://tu-servicio.onrender.com
 LOG_LEVEL=INFO
@@ -80,28 +85,32 @@ uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 
 ### 🏠 Endpoints generales
 
-| Método | Ruta       | Descripción                                    |
-|--------|------------|------------------------------------------------|
-| GET    | `/`        | Verifica que el microservicio esté operativo  |
-| GET    | `/health`  | Health check detallado del sistema            |
+| Método | Ruta       | Descripción                                    | Autenticación |
+|--------|------------|------------------------------------------------|---------------|
+| GET    | `/`        | Verifica que el microservicio esté operativo  | ❌ No         |
+| GET    | `/health`  | Health check detallado del sistema            | ❌ No         |
 
 ### 💳 Endpoints de Webpay
 
-| Método | Ruta             | Descripción                                               |
-|--------|------------------|-----------------------------------------------------------|
-| POST   | `/webpay/init`   | Crea un token de transacción contra el ambiente de prueba|
-| POST   | `/webpay/commit` | Recibe el callback de Webpay (método POST)              |
-| GET    | `/webpay/commit` | Maneja respuestas de Webpay vía GET                      |
+| Método | Ruta             | Descripción                                               | Autenticación |
+|--------|------------------|-----------------------------------------------------------|---------------|
+| POST   | `/webpay/init`   | Crea un token de transacción contra el ambiente de prueba| ✅ API Key    |
+| POST   | `/webpay/commit` | Recibe el callback de Webpay (método POST)              | ❌ No*        |
+| GET    | `/webpay/commit` | Maneja respuestas de Webpay vía GET                      | ❌ No*        |
+
+*Los endpoints de commit no requieren autenticación porque son llamados directamente por Transbank.
 
 ### 🏪 Endpoints de Odoo
 
-| Método | Ruta                            | Descripción                                     |
-|--------|---------------------------------|-------------------------------------------------|
-| GET    | `/odoo/orders/search`           | Busca órdenes por criterios específicos        |
-| GET    | `/odoo/orders/{order_id}`       | Obtiene detalles de una orden específica       |
-| PUT    | `/odoo/orders/{id}/status`      | Actualiza el estado de una orden               |
-| POST   | `/odoo/payments/create`         | Crea una transacción de pago manualmente       |
-| GET    | `/odoo/health`                  | Verifica la conexión con Odoo                  |
+| Método | Ruta                            | Descripción                                     | Autenticación        |
+|--------|---------------------------------|-------------------------------------------------|----------------------|
+| GET    | `/odoo/orders/search`           | Busca órdenes por criterios específicos        | ✅ API Key           |
+| GET    | `/odoo/orders/{order_id}`       | Obtiene detalles de una orden específica       | ✅ API Key           |
+| PUT    | `/odoo/orders/{id}/status`      | Actualiza el estado de una orden               | ✅ API Key           |
+| POST   | `/odoo/payments/create`         | Crea una transacción de pago manualmente       | ✅ API Key + HMAC    |
+| GET    | `/odoo/health`                  | Verifica la conexión con Odoo                  | ✅ API Key           |
+
+
 
 ## 🔄 Flujo de integración completo
 
@@ -178,16 +187,20 @@ webpay_service/
 ├── README.MD
 ├── requirements.txt
 ├── .env                     # Variables de entorno (no versionado)
+├── .gitignore
 ├── src/
 │   ├── __init__.py
 │   ├── main.py             # Aplicación principal FastAPI
 │   ├── config.py           # Configuraciones centralizadas
+│   ├── security.py         # 🔒 Módulo de seguridad (API Key + HMAC)
 │   ├── routes/
 │   │   ├── webpay_routes.py    # Endpoints de Webpay
-│   │   └── odoo_routes.py      # Endpoints de Odoo
-│   └── services/
-│       ├── webpay_service.py   # Lógica de Webpay
-│       └── odoo_sales.py       # Integración con Odoo
+│   │   └── odoo_routes.py      # Endpoints de Odoo (protegidos)
+│   ├── services/
+│   │   ├── webpay_service.py   # Lógica de Webpay
+│   │   └── odoo_sales.py       # Integración con Odoo
+├── tests/
+│   └── test_security.py    # 🧪 Tests de seguridad
 └── venv/                   # Entorno virtual (no versionado)
 ```
 

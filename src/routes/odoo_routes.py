@@ -4,16 +4,23 @@
 ================================
 Define endpoints para interactuar con el ERP Odoo.
 Permite consultar órdenes, actualizar estados y sincronizar datos.
-Crecion de payments
+Creación de payments.
+
+🔒 Seguridad: Todos los endpoints requieren API Key válida.
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Dict, Any, Optional
 from src.services.odoo_sales import OdooSalesService
+from src.security import verify_api_key, verify_hmac_dependency
 from pydantic import BaseModel
 
 # Crear router para agrupar las rutas de Odoo
-odoo_router = APIRouter(prefix="/odoo", tags=["odoo"])
+odoo_router = APIRouter(
+    prefix="/odoo", 
+    tags=["odoo"],
+    dependencies=[Depends(verify_api_key)]  # 🔒 Proteger todas las rutas con API Key
+)
 
 # Instanciar el servicio de Odoo
 odoo_service = OdooSalesService()
@@ -195,11 +202,13 @@ class PaymentCreateRequest(BaseModel):
     payment_data: Optional[Dict[str, Any]] = None
 
 
-@odoo_router.post("/payments/create")
+@odoo_router.post("/payments/create", dependencies=[Depends(verify_hmac_dependency)])
 async def create_payment_transaction(data: PaymentCreateRequest) -> Dict[str, Any]:
     """
     💳 Crea una transacción de pago en Odoo manualmente (modo Odoo Online).
     Incluye automáticamente el partner_id desde la orden.
+    
+    🔒 Seguridad: Requiere API Key + HMAC signature válida
 
     Request body:
     - order_id: ID de la orden (int)
@@ -207,6 +216,11 @@ async def create_payment_transaction(data: PaymentCreateRequest) -> Dict[str, An
     - amount: Monto del pago
     - status: Estado del pago (por defecto "done")
     - payment_data: Información adicional (opcional)
+    
+    Headers requeridos:
+    - X-API-Key: API Key válida
+    - X-Signature: Firma HMAC del body
+    - X-Timestamp: Timestamp unix de la request
     """
     try:
         if not odoo_service.uid:

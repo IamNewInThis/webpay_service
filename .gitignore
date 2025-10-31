@@ -1,2 +1,81 @@
+# ========================================
+# 🔒 Variables de entorno y secretos
+# ========================================
 .env
+.env.*
+!.env.example
+
+# ========================================
+# 🐍 Python
+# ========================================
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Entornos virtuales
+venv/
+env/
+ENV/
+.venv
+
+# Distribución / empaquetado
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.cover
+.hypothesis/
+
+# ========================================
+# 💻 IDEs
+# ========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ========================================
+# 📝 Logs
+# ========================================
+*.log
+logs/
+*.log.*
+
+# ========================================
+# 🔐 Certificados y claves
+# ========================================
+*.pem
+*.key
+*.crt
+*.cer
+
+# ========================================
+# 📦 Dependencias
+# ========================================
+node_modules/
+bower_components/
