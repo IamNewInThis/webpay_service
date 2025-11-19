@@ -5,6 +5,7 @@ Maneja toda la lógica de negocio relacionada con transacciones de Webpay Plus.
 Abstrae la configuración y operaciones del SDK de Transbank.
 """
 
+import os
 import re
 from datetime import datetime
 from typing import Dict, Any
@@ -24,17 +25,28 @@ class WebpayService:
     proporcionando una interfaz limpia para inicializar y confirmar transacciones.
     """
     
-    def __init__(self):
-        """🚀 Inicializa la configuración de Webpay en modo TEST"""
-        self.commerce_code = IntegrationCommerceCodes.WEBPAY_PLUS
-        self.api_key = IntegrationApiKeys.WEBPAY
-        self.integration_type = IntegrationType.TEST
+    def __init__(self, commerce_code: str | None = None, api_key: str | None = None, environment: str | None = None):
+        """🚀 Inicializa la configuración de Webpay usando credenciales reales o de prueba"""
+        env_flag = (environment or os.getenv("WEBPAY_ENVIRONMENT", "TEST")).upper()
+        env_map = {
+            "DEV": IntegrationType.TEST,
+            "DEVELOPMENT": IntegrationType.TEST,
+            "LIVE": IntegrationType.LIVE,
+            "PROD": IntegrationType.LIVE,
+            "PRODUCTION": IntegrationType.LIVE,
+            "TEST": IntegrationType.TEST,
+            "CERTIFICATION": IntegrationType.CERTIFICATION,
+        }
+
+        self.commerce_code = commerce_code or os.getenv("WEBPAY_COMMERCE_CODE", IntegrationCommerceCodes.WEBPAY_PLUS)
+        self.api_key = api_key or os.getenv("WEBPAY_API_KEY", IntegrationApiKeys.WEBPAY)
+        self.integration_type = env_map.get(env_flag, IntegrationType.TEST)
         self.options = WebpayOptions(
             self.commerce_code, 
             self.api_key, 
             self.integration_type
         )
-        print("🔧 WebpayService inicializado en modo TEST")
+        print(f"🔧 WebpayService inicializado en modo {self.integration_type.name}")
     
     def create_transaction(self, amount: int, customer_name: str = None, order_date: str = None) -> Dict[str, Any]:
         """
