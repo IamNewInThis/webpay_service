@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 # Importar routers organizados
 from src.routes.webpay_routes import webpay_router
 from src.routes.odoo_routes import odoo_router
+from src.config import settings
 
 # 🏗️ Configuración de la aplicación FastAPI
 app = FastAPI(
@@ -31,17 +32,10 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# 🌐 Configuración de CORS para permitir requests desde Odoo Online
+# 🌐 Configuración de CORS para permitir requests desde los tenants configurados
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://tecnogrow-webpay.odoo.com",  
-        "https://*.odoo.com",               
-        "http://localhost:8000",            
-    ],
-    allow_credentials=True,                   # Permitir cookies y headers de auth
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Métodos HTTP permitidos
-    allow_headers=["*"],                      # Permitir todos los headers
+    **settings.get_cors_config(),
 )
 
 app.include_router(webpay_router)  # Rutas de Webpay (/webpay/*)

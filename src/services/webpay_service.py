@@ -7,14 +7,18 @@ Abstrae la configuración y operaciones del SDK de Transbank.
 
 import os
 import re
+import time
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 
 from transbank.common.integration_api_keys import IntegrationApiKeys
 from transbank.common.integration_commerce_codes import IntegrationCommerceCodes
 from transbank.common.integration_type import IntegrationType
 from transbank.common.options import WebpayOptions
 from transbank.webpay.webpay_plus.transaction import Transaction
+
+from src.config import settings
+from src.tenants import TenantConfig, tenant_manager
 
 
 class WebpayService:
@@ -25,6 +29,7 @@ class WebpayService:
     proporcionando una interfaz limpia para inicializar y confirmar transacciones.
     """
     
+<<<<<<< Updated upstream
     def __init__(self, commerce_code: str | None = None, api_key: str | None = None, environment: str | None = None):
         """🚀 Inicializa la configuración de Webpay usando credenciales reales o de prueba"""
         env_flag = (environment or os.getenv("WEBPAY_ENVIRONMENT", "TEST")).upper()
@@ -47,8 +52,31 @@ class WebpayService:
             self.integration_type
         )
         print(f"🔧 WebpayService inicializado en modo {self.integration_type.name}")
+=======
+    def __init__(self):
+        """🚀 Inicializa la configuración base de Webpay (modo TEST por defecto)"""
+        default_commerce = os.getenv("WEBPAY_COMMERCE_CODE") or IntegrationCommerceCodes.WEBPAY_PLUS
+        default_api_key = os.getenv("WEBPAY_API_KEY") or IntegrationApiKeys.WEBPAY
+        default_env = os.getenv("WEBPAY_ENVIRONMENT", "TEST")
+
+        self.default_options = WebpayOptions(
+            default_commerce,
+            default_api_key,
+            self._map_integration_type(default_env),
+        )
+        self.return_url = settings.WEBPAY_RETURN_URL
+        self._options_cache: Dict[str, WebpayOptions] = {}
+        self._token_cache: Dict[str, Dict[str, Any]] = {}
+        print("🔧 WebpayService inicializado (multi-tenant ready)")
+>>>>>>> Stashed changes
     
-    def create_transaction(self, amount: int, customer_name: str = None, order_date: str = None) -> Dict[str, Any]:
+    def create_transaction(
+        self,
+        amount: int,
+        customer_name: str | None = None,
+        order_date: str | None = None,
+        tenant: Optional[TenantConfig] = None,
+    ) -> Dict[str, Any]:
         """
         💳 Crea una nueva transacción en Webpay
         
@@ -72,15 +100,14 @@ class WebpayService:
             date_token = order_date_str.replace("-", "")
 
             buy_order = self._build_buy_order(customer_label, normalized_amount, date_token)
-            session_id = f"S-{abs(hash((buy_order, normalized_amount))) % 1000000}"
-
-            # Generar identificadores únicos para la transacción
-            # URL de retorno donde Webpay enviará la respuesta
-            return_url = "https://webpay-service.onrender.com/webpay/commit"
+            tenant = tenant or tenant_manager.default_tenant
+            raw_session = f"S-{abs(hash((buy_order, normalized_amount))) % 1000000}"
+            session_id = tenant_manager.build_session_id(tenant, raw_session)
+            options = self._get_options_for_tenant(tenant)
             
             # Crear transacción usando el SDK de Transbank
-            tx = Transaction(self.options)
-            response = tx.create(buy_order, session_id, normalized_amount, return_url)
+            tx = Transaction(options)
+            response = tx.create(buy_order, session_id, normalized_amount, self.return_url)
 
             # Enriquecer respuesta original para facilitar auditoría
             response.update(
@@ -89,8 +116,15 @@ class WebpayService:
                     "session_id": session_id,
                     "customer_name": customer_label.replace("-", " "),
                     "order_date": order_date_str,
+                    "tenant_id": tenant.id,
                 }
             )
+
+            token = response.get("token")
+            if token:
+                self._remember_token(token, tenant, options)
+            else:
+                print("⚠️ Respuesta de Webpay sin token - no se pudo registrar cache")
             
             print(f"🔸 Transacción creada - Orden: {buy_order}, Monto: ${normalized_amount}")
             print(f"🔸 Token: {response.get('token', 'N/A')}")
@@ -112,8 +146,11 @@ class WebpayService:
             Dict con el resultado de la transacción (status, buy_order, amount, etc.)
         """
         try:
-            tx = Transaction(self.options)
+            options, cached_tenant = self._options_for_token(token)
+            tx = Transaction(options)
             result = tx.commit(token)
+            if cached_tenant:
+                result["tenant_id"] = cached_tenant.id
             
             # Log detallado del resultado
             status = result.get("status")
@@ -212,3 +249,37 @@ class WebpayService:
 
         adjusted = f"w{trimmed_hash}_{amount}_{compact_date}"
         return adjusted[:26]
+
+    def _remember_token(self, token: str, tenant: TenantConfig, options: WebpayOptions) -> None:
+        self._token_cache[token] = {
+            "tenant_id": tenant.id,
+            "options": options,
+            "created_at": time.time(),
+        }
+
+    def _options_for_token(self, token: str) -> Tuple[WebpayOptions, Optional[TenantConfig]]:
+        data = self._token_cache.pop(token, None)
+        if not data:
+            return self.default_options, None
+        tenant = tenant_manager.get_tenant_by_id(data.get("tenant_id"))
+        return data.get("options", self.default_options), tenant
+
+    def _get_options_for_tenant(self, tenant: TenantConfig) -> WebpayOptions:
+        if not tenant or not tenant.webpay:
+            return self.default_options
+
+        cached = self._options_cache.get(tenant.id)
+        if cached:
+            return cached
+
+        integration_type = self._map_integration_type(tenant.webpay.environment)
+        options = WebpayOptions(tenant.webpay.commerce_code, tenant.webpay.api_key, integration_type)
+        self._options_cache[tenant.id] = options
+        return options
+
+    @staticmethod
+    def _map_integration_type(environment: Optional[str]) -> IntegrationType:
+        env = (environment or "TEST").upper()
+        if env in {"PROD", "PRODUCTION", "LIVE"}:
+            return IntegrationType.LIVE
+        return IntegrationType.TEST

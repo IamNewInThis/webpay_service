@@ -17,18 +17,19 @@ Maneja inicialización, confirmación y cancelación de transacciones.
 
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import RedirectResponse
+from typing import Dict, Any, Optional
+from datetime import datetime
+
 from src.services.webpay_service import WebpayService
 from src.services.odoo_sales import OdooSalesService
-from src.security import verify_api_key, verify_frontend_request
-from typing import Dict, Any
-from datetime import datetime
+from src.security import verify_frontend_request
+from src.tenants import TenantConfig, tenant_manager
 
 # Crear router para agrupar las rutas de Webpay
 webpay_router = APIRouter(prefix="/webpay", tags=["webpay"])
 
-# Instanciar servicios
+# Instanciar servicios (multi-tenant para Odoo se resuelve dinámicamente)
 webpay_service = WebpayService()
-odoo_service = OdooSalesService()
 
 
 @webpay_router.post("/init")
@@ -68,14 +69,18 @@ async def init_webpay_transaction(
         customer_name = data.get("customer_name", "Cliente")
         order_date = data.get("order_date")
         
-        print(f"💳 Iniciando transacción desde origen: {validation.get('origin')}")
+        tenant = validation.get("tenant") or tenant_manager.default_tenant
+        print(
+            f"💳 Iniciando transacción desde {validation.get('origin')} -> tenant {tenant.id}"
+        )
         print(f"   Cliente: {customer_name}, Monto: ${amount}")
         
         # Crear transacción usando el servicio
         response = webpay_service.create_transaction(
             amount=amount,
             customer_name=customer_name,
-            order_date=order_date
+            order_date=order_date,
+            tenant=tenant,
         )
         
         return response
@@ -104,31 +109,31 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
         form = await request.form()
         token = form.get("token_ws")
         
+        tenant = _tenant_from_session(form.get("TBK_ID_SESION"))
+        
         if not token:
             print("⚠️ POST sin token_ws - Posible cancelación")
             return RedirectResponse(
-                url="https://tecnogrow-webpay.odoo.com/shop/payment?status=cancelled"
+                url=tenant.build_payment_status_url("cancelled")
             )
         
         # Confirmar transacción
         result = webpay_service.commit_transaction(token)
-        
+        tenant = (
+            tenant_manager.get_tenant_by_id(result.get("tenant_id"))
+            or tenant_manager.tenant_from_session(result.get("session_id"))
+            or tenant
+        )
+       
         # Si la transacción es exitosa, intentar actualizar orden en Odoo
         if webpay_service.is_transaction_successful(result):
             # Intentar encontrar y actualizar la orden correspondiente en Odoo
-            await _process_successful_payment(result)
-
-            # Buscar la orden en Odoo con find_order_by_criteria
-
-            # Despues de obtenerla marcar el estado como 'sale'
+            await _process_successful_payment(result, tenant)
             
-            redirect_url = (
-                f"https://tecnogrow-webpay.odoo.com/shop/confirmation"
-                f"?status=success&order={result['buy_order']}"
-            )
+            redirect_url = tenant.build_success_url(result["buy_order"])
             print(f"✅ POST - Redirigiendo a confirmación: {result['buy_order']}")
         else:
-            redirect_url = "https://tecnogrow-webpay.odoo.com/shop/payment?status=rejected"
+            redirect_url = tenant.build_payment_status_url("rejected")
             print("❌ POST - Transacción rechazada")
         
         return RedirectResponse(url=redirect_url)
@@ -136,7 +141,7 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
     except Exception as e:
         print(f"❌ Error en POST /webpay/commit: {str(e)}")
         return RedirectResponse(
-            url="https://tecnogrow-webpay.odoo.com/shop/payment?status=error"
+            url=tenant.build_payment_status_url("error") if tenant else tenant_manager.default_tenant.build_payment_status_url("error")
         )
 
 
@@ -161,6 +166,7 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
         params = dict(request.query_params)
         print(f"📥 GET /webpay/commit - Params: {params}")
         
+        tenant = _tenant_from_session(params.get("TBK_ID_SESION"))
         token = params.get("token_ws")
         
         if not token:
@@ -168,29 +174,31 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
             if "TBK_TOKEN" in params:
                 print("❌ GET - Usuario canceló la transacción")
                 return RedirectResponse(
-                    url="https://tecnogrow-webpay.odoo.com/shop/payment?status=cancelled"
+                    url=tenant.build_payment_status_url("cancelled")
                 )
             else:
                 print("⚠️ GET - Sin tokens válidos")
                 return RedirectResponse(
-                    url="https://tecnogrow-webpay.odoo.com/shop/payment?status=error"
+                    url=tenant.build_payment_status_url("error")
                 )
         
         # Procesar transacción con token_ws
         result = webpay_service.commit_transaction(token)
+        tenant = (
+            tenant_manager.get_tenant_by_id(result.get("tenant_id"))
+            or tenant_manager.tenant_from_session(result.get("session_id"))
+            or tenant
+        )
         
         # Si la transacción es exitosa, intentar actualizar orden en Odoo
         if webpay_service.is_transaction_successful(result):
             # Intentar encontrar y actualizar la orden correspondiente en Odoo
-            await _process_successful_payment(result)
+            await _process_successful_payment(result, tenant)
             
-            redirect_url = (
-                f"https://tecnogrow-webpay.odoo.com/shop/confirmation"
-                f"?status=success&order={result['buy_order']}"
-            )
+            redirect_url = tenant.build_success_url(result["buy_order"])
             print(f"✅ GET - Redirigiendo a confirmación: {result['buy_order']}")
         else:
-            redirect_url = "https://tecnogrow-webpay.odoo.com/shop/payment?status=rejected"
+            redirect_url = tenant.build_payment_status_url("rejected")
             print("❌ GET - Transacción rechazada")
         
         return RedirectResponse(url=redirect_url)
@@ -198,11 +206,11 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
     except Exception as e:
         print(f"❌ Error en GET /webpay/commit: {str(e)}")
         return RedirectResponse(
-            url="https://tecnogrow-webpay.odoo.com/shop/payment?status=error"
+            url=tenant.build_payment_status_url("error") if tenant else tenant_manager.default_tenant.build_payment_status_url("error")
         )
 
 
-async def _process_successful_payment(payment_result: Dict[str, Any]) -> None:
+async def _process_successful_payment(payment_result: Dict[str, Any], tenant: TenantConfig) -> None:
     """
     🔄 Procesa un pago exitoso e intenta actualizar la orden en Odoo
     
@@ -235,7 +243,8 @@ async def _process_successful_payment(payment_result: Dict[str, Any]) -> None:
             print(f"🔍 Buscando orden en Odoo - Cliente: {customer_name}, Monto: {amount}, Fecha: {formatted_date}")
             
             # Buscar orden en Odoo por criterios
-            order = odoo_service.find_order_by_criteria(
+            odoo_client = OdooSalesService(tenant.odoo)
+            order = odoo_client.find_order_by_criteria(
                 customer_name=customer_name,
                 amount=amount,
                 order_date=formatted_date
@@ -243,7 +252,7 @@ async def _process_successful_payment(payment_result: Dict[str, Any]) -> None:
             
             if order:
                 # Actualizar estado de la orden
-                success = odoo_service.update_order_payment_status(
+                success = odoo_client.update_order_payment_status(
                     order_id=order["id"],
                     payment_data=payment_result
                 )
@@ -259,7 +268,7 @@ async def _process_successful_payment(payment_result: Dict[str, Any]) -> None:
                         else "error"
                     )
                     
-                    registered = odoo_service.register_webpay_transaction(
+                    registered = odoo_client.register_webpay_transaction(
                         order_id=order["id"],
                         order_name=order["name"],
                         amount=amount,
@@ -278,29 +287,6 @@ async def _process_successful_payment(payment_result: Dict[str, Any]) -> None:
                         )
                 else:
                     print(f"❌ Error actualizando orden {order['name']} en Odoo")
-
-                tx_status = (
-                    "done"
-                    if payment_result.get("status") == "AUTHORIZED"
-                    or payment_result.get("response_code") == 0
-                    else "error"
-                )
-                registered = odoo_service.register_webpay_transaction(
-                    order_id=order["id"],
-                    order_name=order["name"],
-                    amount=amount,
-                    status=tx_status,
-                    payment_data=payment_result,
-                )
-
-                if registered:
-                    print(
-                        f"✅ Transacción Webpay registrada para orden {order['name']} con estado {tx_status}"
-                    )
-                else:
-                    print(
-                        f"⚠️ No se pudo registrar la transacción Webpay para orden {order['name']}"
-                    )
             else:
                 print("⚠️ No se encontró orden correspondiente en Odoo")
         else:
@@ -309,3 +295,12 @@ async def _process_successful_payment(payment_result: Dict[str, Any]) -> None:
     except Exception as e:
         print(f"❌ Error procesando pago exitoso: {str(e)}")
         # No levantamos la excepción para que el pago continue normalmente
+
+
+def _tenant_from_session(session_id: Optional[str]) -> TenantConfig:
+    """
+    Devuelve el tenant asociado al session_id de Webpay.
+    Si no se encuentra coincidencia usa el tenant por defecto.
+    """
+    tenant = tenant_manager.tenant_from_session(session_id)
+    return tenant or tenant_manager.default_tenant

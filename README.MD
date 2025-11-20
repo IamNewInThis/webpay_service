@@ -49,10 +49,56 @@ API_KEY=tu-api-key-segura-aqui
 HMAC_SECRET=tu-secreto-hmac-super-seguro-aqui
 TIMESTAMP_TOLERANCE=300
 
+# 💳 Configuración de Webpay (fallback)
+WEBPAY_ENVIRONMENT=TEST
+WEBPAY_COMMERCE_CODE=5970XXXXXXXX
+WEBPAY_API_KEY=tu-api-key-webpay
+
 # 🌐 Configuración del servicio
 SERVICE_BASE_URL=https://tu-servicio.onrender.com
 LOG_LEVEL=INFO
+
+# 🧩 Configuración multi-tenant (opcional)
+TENANT_CONFIGS='[
+  {
+    "id": "***id***",
+    "name": "***name***",
+    "origins": ["***https://<tu-dominio>.odoo.com***"],
+    "odoo": {
+      "url": "***https://<tu-dominio>.odoo.com***",
+      "database": "***your-database-name***",
+      "username": "***your-username***",
+      "password": "********"
+    },
+    "webpay": {
+      "commerce_code": "***tu-commerce-code***",
+      "api_key": "***tu-api-key-webpay***",
+      "environment": "PROD"
+    }
+  },
+  {
+    "id": "simpledigital",
+    "name": "Simple Digital",
+    "origins": [
+      "***https://<tu-dominio>.odoo.com***",
+      "***https://<tu-dominio>.com***"
+    ],
+    "odoo": {
+      "url": "***https://<tu-dominio>.odoo.com***",
+      "database": "***your-database-name***",
+      "username": "***your-username***",
+      "password": "********"
+    },
+    "webpay": {
+      "commerce_code": "***tu-commerce-code***",
+      "api_key": "***tu-api-key-webpay***",
+      "environment": "TEST"
+    }
+  }
+]'
 ```
+
+> Si `TENANT_CONFIGS` no está definido, el servicio utilizará las variables `ODOO_*` y `WEBPAY_*` del `.env` como tenant por defecto. Cada origen definido se valida automáticamente en CORS y en el middleware `verify_frontend_request`, y el ambiente de Webpay se determina con `WEBPAY_ENVIRONMENT` (`TEST` o `PROD`).
 
 ### 3. Instalación de dependencias
 
@@ -244,8 +290,6 @@ Clave: 123
 ```
 
 ## 🚀 Próximas mejoras
-
-- [ ] Manejo de múltiples proveedores de pago
 - [ ] Dashboard de monitoreo de transacciones
 - [ ] Notificaciones automáticas por email
 - [ ] Integración con webhooks de Odoo
@@ -254,3 +298,22 @@ Clave: 123
 
 ## url de prueba
 https://webpay3gint.transbank.cl/webpayserver/initTransaction?token_ws=01ab3321e3f70dedc382e6a09d54a9665bd6422d4eedf6bcf407a43b00a0a3e1
+
+# Despliegue del contenedor
+
+- Crear la imagen Docker:
+```bash
+docker build -t webpay_service .
+```
+
+- Correr el contenedor:
+```bash
+docker run -d \
+  --name webpay_container \
+  -p 8000:8000 \
+  -e ODOO_DATABASE="tecnogrow-webpay" \
+  -e ODOO_PASSWORD="Ab67d7654.123" \
+  -e ODOO_URL="https://tecnogrow-webpay.odoo.com" \
+  -e ODOO_USERNAME="admin@tecnogrow.cl" \
+  webpay_service
+```
