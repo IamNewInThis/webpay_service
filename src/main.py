@@ -11,12 +11,16 @@ Funcionalidades:
 - 🔄 Integración con Odoo ERP (en desarrollo)
 
 Autor: Sistema de Pagos Tecnogrow
-Versión: 1.3.0
+Versión: 1.0.0
 """
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Importar routers organizados
 from src.routes.webpay_routes import webpay_router
@@ -26,16 +30,18 @@ from src.routes.odoo_routes import odoo_router
 app = FastAPI(
     title="Webpay Service API",
     description="Microservicio para procesamiento de pagos con Webpay Plus",
-    version="1.3.0",
+    version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
 
 # 🌐 Configuración de CORS para permitir requests desde Odoo Online
+ODOO_URL = os.getenv("ODOO_URL", "https://tecnogrow-webpay.odoo.com")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://tecnogrow-webpay.odoo.com",  
+        ODOO_URL,  
         "https://*.odoo.com",               
         "http://localhost:8000",            
     ],
@@ -62,7 +68,7 @@ async def root():
     return {
         "status": "ok",
         "message": "Webpay Service operativo",
-        "version": "1.3.0",
+        "version": "1.0.0",
     }
 
 

@@ -29,8 +29,10 @@ HMAC_SECRET = os.getenv("HMAC_SECRET", "")
 TIMESTAMP_TOLERANCE = 300
 
 # 🌐 Orígenes permitidos (dominios autorizados para llamar al middleware)
+ODOO_URL = os.getenv("ODOO_URL", "https://tecnogrow-webpay.odoo.com")
+
 ALLOWED_ORIGINS: List[str] = [
-    "https://tecnogrow-webpay.odoo.com",
+    ODOO_URL,
     "https://tecnogrow.odoo.com",
     "http://localhost:8000",  # Para desarrollo
 ]

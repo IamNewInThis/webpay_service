@@ -38,6 +38,10 @@ class OdooSalesService:
         self.password = os.getenv("ODOO_PASSWORD")
         self.internal_token = os.getenv("INTERNAL_TOKEN", "")
         
+        # 💳 Configuración de Webpay
+        self.webpay_provider_id = int(os.getenv("WEBPAY_PROVIDER_ID", "25"))
+        self.webpay_payment_method_id = int(os.getenv("WEBPAY_PAYMENT_METHOD_ID", "211"))
+        
         self.uid = None  # Se establecerá después de autenticar
         self.session = requests.Session()
         self._provider_cache: Dict[str, int] = {}
@@ -333,8 +337,8 @@ class OdooSalesService:
                 normalized_amount = 0.0
 
             payment_data = payment_data or {}
-            provider_id = 25  # Provider Webpay configurado en Odoo
-            payment_method_id = 211  # Método de pago Webpay configurado en Odoo
+            provider_id = self.webpay_provider_id
+            payment_method_id = self.webpay_payment_method_id
             provider_code = payment_data.get("provider_code") or "webpay"
             payment_data.update(
                 {

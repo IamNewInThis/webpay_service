@@ -22,6 +22,10 @@ from src.services.odoo_sales import OdooSalesService
 from src.security import verify_api_key, verify_frontend_request
 from typing import Dict, Any
 from datetime import datetime
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Crear router para agrupar las rutas de Webpay
 webpay_router = APIRouter(prefix="/webpay", tags=["webpay"])
@@ -29,6 +33,9 @@ webpay_router = APIRouter(prefix="/webpay", tags=["webpay"])
 # Instanciar servicios
 webpay_service = WebpayService()
 odoo_service = OdooSalesService()
+
+# 🌍 Obtener URL de Odoo desde variable de entorno
+ODOO_URL = os.getenv("ODOO_URL", "https://tecnogrow-webpay.odoo.com")
 
 
 @webpay_router.post("/init")
@@ -107,7 +114,7 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
         if not token:
             print("⚠️ POST sin token_ws - Posible cancelación")
             return RedirectResponse(
-                url="https://tecnogrow-webpay.odoo.com/shop/payment?status=cancelled"
+                url=f"{ODOO_URL}/shop/payment?status=cancelled"
             )
         
         # Confirmar transacción
@@ -123,12 +130,12 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
             # Despues de obtenerla marcar el estado como 'sale'
             
             redirect_url = (
-                f"https://tecnogrow-webpay.odoo.com/shop/confirmation"
+                f"{ODOO_URL}/shop/confirmation"
                 f"?status=success&order={result['buy_order']}"
             )
             print(f"✅ POST - Redirigiendo a confirmación: {result['buy_order']}")
         else:
-            redirect_url = "https://tecnogrow-webpay.odoo.com/shop/payment?status=rejected"
+            redirect_url = f"{ODOO_URL}/shop/payment?status=rejected"
             print("❌ POST - Transacción rechazada")
         
         return RedirectResponse(url=redirect_url)
@@ -136,7 +143,7 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
     except Exception as e:
         print(f"❌ Error en POST /webpay/commit: {str(e)}")
         return RedirectResponse(
-            url="https://tecnogrow-webpay.odoo.com/shop/payment?status=error"
+            url=f"{ODOO_URL}/shop/payment?status=error"
         )
 
 
@@ -168,12 +175,12 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
             if "TBK_TOKEN" in params:
                 print("❌ GET - Usuario canceló la transacción")
                 return RedirectResponse(
-                    url="https://tecnogrow-webpay.odoo.com/shop/payment?status=cancelled"
+                    url=f"{ODOO_URL}/shop/payment?status=cancelled"
                 )
             else:
                 print("⚠️ GET - Sin tokens válidos")
                 return RedirectResponse(
-                    url="https://tecnogrow-webpay.odoo.com/shop/payment?status=error"
+                    url=f"{ODOO_URL}/shop/payment?status=error"
                 )
         
         # Procesar transacción con token_ws
@@ -185,12 +192,12 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
             await _process_successful_payment(result)
             
             redirect_url = (
-                f"https://tecnogrow-webpay.odoo.com/shop/confirmation"
+                f"{ODOO_URL}/shop/confirmation"
                 f"?status=success&order={result['buy_order']}"
             )
             print(f"✅ GET - Redirigiendo a confirmación: {result['buy_order']}")
         else:
-            redirect_url = "https://tecnogrow-webpay.odoo.com/shop/payment?status=rejected"
+            redirect_url = f"{ODOO_URL}/shop/payment?status=rejected"
             print("❌ GET - Transacción rechazada")
         
         return RedirectResponse(url=redirect_url)
@@ -198,7 +205,7 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
     except Exception as e:
         print(f"❌ Error en GET /webpay/commit: {str(e)}")
         return RedirectResponse(
-            url="https://tecnogrow-webpay.odoo.com/shop/payment?status=error"
+            url=f"{ODOO_URL}/shop/payment?status=error"
         )
 
 

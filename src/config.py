@@ -15,14 +15,14 @@ class Settings:
     """
     
     # 🌐 Configuración de CORS
+    # 🏪 URLs de Odoo
+    ODOO_BASE_URL: str = os.getenv("ODOO_URL", "https://tecnogrow-webpay.odoo.com")
+    
     ALLOWED_ORIGINS: List[str] = [
-        "https://tecnogrow-webpay.odoo.com",
-        "https://*.odoo.com",
-        "http://localhost:3000",  # Para desarrollo local
+        ODOO_BASE_URL,
+        "http://localhost:3000", 
     ]
     
-    # 🏪 URLs de Odoo
-    ODOO_BASE_URL: str = "https://tecnogrow-webpay.odoo.com"
     ODOO_SUCCESS_URL: str = f"{ODOO_BASE_URL}/shop/confirmation"
     ODOO_PAYMENT_URL: str = f"{ODOO_BASE_URL}/shop/payment"
     
@@ -33,7 +33,7 @@ class Settings:
     # 🌍 URL del servicio (para return_url de Webpay)
     SERVICE_BASE_URL: str = os.getenv(
         "SERVICE_BASE_URL", 
-        "https://webpay-service.onrender.com"
+        "https://webpay.simpledigitalhost.cl"
     )
     
     # 🔑 API Keys (desde variables de entorno)
