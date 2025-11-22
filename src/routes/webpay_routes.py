@@ -1,306 +1,267 @@
 """
-🌐 Rutas de Webpay
-==================
-Define todos los endpoints relacionados con transacciones de Webpay Plus.
-Maneja inicialización, confirmación y cancelación de transacciones.
-
-🔒 Seguridad (Arquitectura Odoo Online):
-- /init requiere ORIGEN VÁLIDO (dominio Odoo autorizado) - llamado desde frontend
-- /commit (GET/POST) no requiere autenticación (llamado por Transbank)
-
-⚠️ IMPORTANTE: En Odoo Online no puedes agregar endpoints backend ni guardar secretos.
-   Todo el control de seguridad se hace en este middleware, que:
-   1. Valida que las llamadas vengan del dominio Odoo autorizado
-   2. Gestiona las claves API de Webpay de forma segura
-   3. Actualiza Odoo vía JSON-RPC con credenciales seguras
+🏦 Servicio de Webpay Plus
+========================
+Maneja toda la lógica de negocio relacionada con transacciones de Webpay Plus.
+Abstrae la configuración y operaciones del SDK de Transbank.
 """
 
-from fastapi import APIRouter, Request, Depends
-from fastapi.responses import RedirectResponse
-from typing import Dict, Any, Optional
+import os
+import re
+import time
 from datetime import datetime
+from typing import Dict, Any, Optional, Tuple
 
-from src.services.webpay_service import WebpayService
-from src.services.odoo_sales import OdooSalesService
-from src.security import verify_frontend_request
+from transbank.common.integration_api_keys import IntegrationApiKeys
+from transbank.common.integration_commerce_codes import IntegrationCommerceCodes
+from transbank.common.integration_type import IntegrationType
+from transbank.common.options import WebpayOptions
+from transbank.webpay.webpay_plus.transaction import Transaction
+
+from src.config import settings
 from src.tenants import TenantConfig, tenant_manager
 
-# Crear router para agrupar las rutas de Webpay
-webpay_router = APIRouter(prefix="/webpay", tags=["webpay"])
 
-# Instanciar servicios (multi-tenant para Odoo se resuelve dinámicamente)
-webpay_service = WebpayService()
-
-
-@webpay_router.post("/init")
-async def init_webpay_transaction(
-    request: Request,
-    validation: Dict[str, Any] = Depends(verify_frontend_request)
-) -> Dict[str, Any]:
+class WebpayService:
     """
-    🚀 Inicializa una nueva transacción Webpay
+    🔧 Servicio para manejar transacciones Webpay Plus
     
-    🔒 Seguridad: Valida que el request venga del dominio Odoo autorizado
+    Encapsula toda la configuración y operaciones del SDK de Transbank,
+    proporcionando una interfaz limpia para inicializar y confirmar transacciones.
+    """
     
-    Este endpoint es llamado desde el frontend de Odoo (JavaScript).
-    NO requiere API Key porque el frontend no puede guardar secretos de forma segura.
-    En su lugar, validamos que el origen sea un dominio Odoo autorizado.
-    
-    Headers opcionales (recomendados):
-        X-Timestamp: Timestamp unix para prevenir replay attacks
-    
-    Body esperado:
-    {
-        "amount": 10000,
-        "customer_name": "Juan Pérez",
-        "order_date": "2025-10-19"
-    }
-    
-    Returns:
-        {
-            "token": "abc123...",
-            "url": "https://webpay3gint.transbank.cl/webpayserver/initTransaction"
+    def __init__(self, commerce_code: str | None = None, api_key: str | None = None, environment: str | None = None):
+        """🚀 Inicializa la configuración de Webpay usando credenciales reales o de prueba"""
+        env_flag = (environment or os.getenv("WEBPAY_ENVIRONMENT", "TEST")).upper()
+        env_map = {
+            "DEV": IntegrationType.TEST,
+            "DEVELOPMENT": IntegrationType.TEST,
+            "LIVE": IntegrationType.LIVE,
+            "PROD": IntegrationType.LIVE,
+            "PRODUCTION": IntegrationType.LIVE,
+            "TEST": IntegrationType.TEST,
+            "CERTIFICATION": IntegrationType.CERTIFICATION,
         }
-    """
-    try:
-        # Extraer datos del request
-        data = await request.json()
-        amount = data.get("amount", 1000)
-        customer_name = data.get("customer_name", "Cliente")
-        order_date = data.get("order_date")
-        
-        tenant = validation.get("tenant") or tenant_manager.default_tenant
-        print(
-            f"💳 Iniciando transacción desde {validation.get('origin')} -> tenant {tenant.id}"
-        )
-        print(f"   Cliente: {customer_name}, Monto: ${amount}")
-        
-        # Crear transacción usando el servicio
-        response = webpay_service.create_transaction(
-            amount=amount,
-            customer_name=customer_name,
-            order_date=order_date,
-            tenant=tenant,
-        )
-        
-        return response
-        
-    except Exception as e:
-        print(f"❌ Error en /webpay/init: {str(e)}")
-        return {"error": "Error interno del servidor", "message": str(e)}
 
-
-@webpay_router.post("/commit")
-async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
-    """
-    ✅ Confirma una transacción Webpay (método POST)
-    
-    Endpoint que recibe la respuesta de Webpay cuando el usuario completa
-    el pago exitosamente. Webpay envía el token_ws via POST form data.
-    
-    Form data esperado:
-        token_ws: Token de la transacción
-    
-    Returns:
-        Redirección a la página de confirmación o error según el resultado
-    """
-    try:
-        # Extraer token del formulario
-        form = await request.form()
-        token = form.get("token_ws")
-        
-        tenant = _tenant_from_session(form.get("TBK_ID_SESION"))
-        
-        if not token:
-            print("⚠️ POST sin token_ws - Posible cancelación")
-            return RedirectResponse(
-                url=tenant.build_payment_status_url("cancelled")
-            )
-        
-        # Confirmar transacción
-        result = webpay_service.commit_transaction(token)
-        tenant = (
-            tenant_manager.get_tenant_by_id(result.get("tenant_id"))
-            or tenant_manager.tenant_from_session(result.get("session_id"))
-            or tenant
+        self.commerce_code = commerce_code or os.getenv("WEBPAY_COMMERCE_CODE", IntegrationCommerceCodes.WEBPAY_PLUS)
+        self.api_key = api_key or os.getenv("WEBPAY_API_KEY", IntegrationApiKeys.WEBPAY)
+        self.integration_type = env_map.get(env_flag, IntegrationType.TEST)
+        self.options = WebpayOptions(
+            self.commerce_code, 
+            self.api_key, 
+            self.integration_type
         )
-       
-        # Si la transacción es exitosa, intentar actualizar orden en Odoo
-        if webpay_service.is_transaction_successful(result):
-            # Intentar encontrar y actualizar la orden correspondiente en Odoo
-            await _process_successful_payment(result, tenant)
+        print(f"🔧 WebpayService inicializado en modo {self.integration_type.name}")
+    
+    def create_transaction(
+        self,
+        amount: int,
+        customer_name: str | None = None,
+        order_date: str | None = None,
+        tenant: Optional[TenantConfig] = None,
+    ) -> Dict[str, Any]:
+        """
+        💳 Crea una nueva transacción en Webpay
+        
+        Args:
+            amount: Monto en pesos chilenos (entero)
+            customer_name: Nombre del cliente (opcional)
+            order_date: Fecha de la orden (opcional)
             
-            redirect_url = tenant.build_success_url(result["buy_order"])
-            print(f"✅ POST - Redirigiendo a confirmación: {result['buy_order']}")
-        else:
-            redirect_url = tenant.build_payment_status_url("rejected")
-            print("❌ POST - Transacción rechazada")
-        
-        return RedirectResponse(url=redirect_url)
-        
-    except Exception as e:
-        print(f"❌ Error en POST /webpay/commit: {str(e)}")
-        return RedirectResponse(
-            url=tenant.build_payment_status_url("error") if tenant else tenant_manager.default_tenant.build_payment_status_url("error")
-        )
-
-
-@webpay_router.get("/commit")
-async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
-    """
-    🔄 Maneja respuestas de Webpay vía GET
-    
-    Webpay a veces envía la respuesta como GET con parámetros en la URL.
-    Esto puede suceder tanto para transacciones exitosas como cancelaciones.
-    
-    Query params esperados:
-        - token_ws: Para transacciones exitosas/fallidas
-        - TBK_TOKEN: Para cancelaciones del usuario
-        - TBK_ORDEN_COMPRA: Orden de compra (en cancelaciones)
-        - TBK_ID_SESION: ID de sesión (en cancelaciones)
-    
-    Returns:
-        Redirección apropiada según el tipo de respuesta
-    """
-    try:
-        params = dict(request.query_params)
-        print(f"📥 GET /webpay/commit - Params: {params}")
-        
-        tenant = _tenant_from_session(params.get("TBK_ID_SESION"))
-        token = params.get("token_ws")
-        
-        if not token:
-            # Verificar si es una cancelación (tiene TBK_TOKEN pero no token_ws)
-            if "TBK_TOKEN" in params:
-                print("❌ GET - Usuario canceló la transacción")
-                return RedirectResponse(
-                    url=tenant.build_payment_status_url("cancelled")
-                )
-            else:
-                print("⚠️ GET - Sin tokens válidos")
-                return RedirectResponse(
-                    url=tenant.build_payment_status_url("error")
-                )
-        
-        # Procesar transacción con token_ws
-        result = webpay_service.commit_transaction(token)
-        tenant = (
-            tenant_manager.get_tenant_by_id(result.get("tenant_id"))
-            or tenant_manager.tenant_from_session(result.get("session_id"))
-            or tenant
-        )
-        
-        # Si la transacción es exitosa, intentar actualizar orden en Odoo
-        if webpay_service.is_transaction_successful(result):
-            # Intentar encontrar y actualizar la orden correspondiente en Odoo
-            await _process_successful_payment(result, tenant)
-            
-            redirect_url = tenant.build_success_url(result["buy_order"])
-            print(f"✅ GET - Redirigiendo a confirmación: {result['buy_order']}")
-        else:
-            redirect_url = tenant.build_payment_status_url("rejected")
-            print("❌ GET - Transacción rechazada")
-        
-        return RedirectResponse(url=redirect_url)
-        
-    except Exception as e:
-        print(f"❌ Error en GET /webpay/commit: {str(e)}")
-        return RedirectResponse(
-            url=tenant.build_payment_status_url("error") if tenant else tenant_manager.default_tenant.build_payment_status_url("error")
-        )
-
-
-async def _process_successful_payment(payment_result: Dict[str, Any], tenant: TenantConfig) -> None:
-    """
-    🔄 Procesa un pago exitoso e intenta actualizar la orden en Odoo
-    
-    Extrae información del buy_order para encontrar la orden correspondiente
-    en Odoo y actualizar su estado de pago.
-    
-    Args:
-        payment_result: Resultado de la transacción de Webpay
-    """
-    try:
-        buy_order = payment_result.get("buy_order", "") or ""
-        raw_amount = payment_result.get("amount", 0)
+        Returns:
+            Dict con 'token' y 'url' para redireccionar al usuario
+        """
         try:
-            amount = int(float(raw_amount))
-        except (TypeError, ValueError):
-            amount = 0
-        
-        # Extraer datos del buy_order (formato: {customer_name}_{amount}_{date})
-        parts = buy_order.split("_")
-        if len(parts) >= 3:
-            customer_name = parts[0].replace("-", " ").title()  # Reconvertir espacios
-            order_date = parts[2]  # Formato YYYYMMDD
-            
-            # Convertir fecha a formato YYYY-MM-DD
             try:
-                formatted_date = datetime.strptime(order_date, "%Y%m%d").strftime("%Y-%m-%d")
-            except ValueError:
-                formatted_date = datetime.utcnow().strftime("%Y-%m-%d")
+                normalized_amount = int(float(amount))
+            except (TypeError, ValueError):
+                normalized_amount = 0
+
+            # 🔤 Preparar identificadores reutilizables para el commit
+            customer_label = self._sanitize_customer_name(customer_name)
+            order_date_str = self._normalize_order_date(order_date)
+            date_token = order_date_str.replace("-", "")
+
+            buy_order = self._build_buy_order(customer_label, normalized_amount, date_token)
+            tenant = tenant or tenant_manager.default_tenant
+            raw_session = f"S-{abs(hash((buy_order, normalized_amount))) % 1000000}"
+            session_id = tenant_manager.build_session_id(tenant, raw_session)
+            options = self._get_options_for_tenant(tenant)
             
-            print(f"🔍 Buscando orden en Odoo - Cliente: {customer_name}, Monto: {amount}, Fecha: {formatted_date}")
-            
-            # Buscar orden en Odoo por criterios
-            odoo_client = OdooSalesService(tenant.odoo)
-            order = odoo_client.find_order_by_criteria(
-                customer_name=customer_name,
-                amount=amount,
-                order_date=formatted_date
+            # Crear transacción usando el SDK de Transbank
+            tx = Transaction(options)
+            response = tx.create(buy_order, session_id, normalized_amount, self.return_url)
+
+            # Enriquecer respuesta original para facilitar auditoría
+            response.update(
+                {
+                    "buy_order": buy_order,
+                    "session_id": session_id,
+                    "customer_name": customer_label.replace("-", " "),
+                    "order_date": order_date_str,
+                    "tenant_id": tenant.id,
+                }
             )
-            
-            if order:
-                # Actualizar estado de la orden
-                success = odoo_client.update_order_payment_status(
-                    order_id=order["id"],
-                    payment_data=payment_result
-                )
-                
-                if success:
-                    print(f"✅ Orden {order['name']} actualizada exitosamente en Odoo")
-                    
-                    # 💳 Registrar transacción Webpay en Odoo
-                    tx_status = (
-                        "done"
-                        if payment_result.get("status") == "AUTHORIZED"
-                        or payment_result.get("response_code") == 0
-                        else "error"
-                    )
-                    
-                    registered = odoo_client.register_webpay_transaction(
-                        order_id=order["id"],
-                        order_name=order["name"],
-                        amount=amount,
-                        status=tx_status,
-                        payment_data=payment_result,
-                        order_data=order,
-                    )
 
-                    if registered:
-                        print(
-                            f"✅ Transacción Webpay registrada para orden {order['name']} con estado {tx_status}"
-                        )
-                    else:
-                        print(
-                            f"⚠️ No se pudo registrar la transacción Webpay para orden {order['name']}"
-                        )
-                else:
-                    print(f"❌ Error actualizando orden {order['name']} en Odoo")
+            token = response.get("token")
+            if token:
+                self._remember_token(token, tenant, options)
             else:
-                print("⚠️ No se encontró orden correspondiente en Odoo")
-        else:
-            print(f"⚠️ Formato de buy_order inválido: {buy_order}")
+                print("⚠️ Respuesta de Webpay sin token - no se pudo registrar cache")
             
-    except Exception as e:
-        print(f"❌ Error procesando pago exitoso: {str(e)}")
-        # No levantamos la excepción para que el pago continue normalmente
+            print(f"🔸 Transacción creada - Orden: {buy_order}, Monto: ${normalized_amount}")
+            print(f"🔸 Token: {response.get('token', 'N/A')}")
+            
+            return response
+            
+        except Exception as e:
+            print(f"❌ Error creando transacción: {str(e)}")
+            raise e
+    
+    def commit_transaction(self, token: str) -> Dict[str, Any]:
+        """
+        ✅ Confirma una transacción usando el token de Webpay
+        
+        Args:
+            token: Token ws devuelto por Webpay después del pago
+            
+        Returns:
+            Dict con el resultado de la transacción (status, buy_order, amount, etc.)
+        """
+        try:
+            options, cached_tenant = self._options_for_token(token)
+            tx = Transaction(options)
+            result = tx.commit(token)
+            if cached_tenant:
+                result["tenant_id"] = cached_tenant.id
+            
+            # Log detallado del resultado
+            status = result.get("status")
+            response_code = result.get("response_code")
+            buy_order = result.get("buy_order")
+            amount = result.get("amount")
+            
+            print(f"✅ Transacción confirmada - Orden: {buy_order}")
+            print(f"🔍 Status: {status}, Response Code: {response_code}")
+            print(f"💰 Monto: ${amount}")
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ Error confirmando transacción: {str(e)}")
+            raise e
+    
+    def is_transaction_successful(self, transaction_result: Dict[str, Any]) -> bool:
+        """
+        🎯 Determina si una transacción fue exitosa
+        
+        Args:
+            transaction_result: Resultado devuelto por commit_transaction
+            
+        Returns:
+            True si la transacción fue autorizada exitosamente
+        """
+        status = transaction_result.get("status")
+        response_code = transaction_result.get("response_code")
+        
+        # Una transacción es exitosa si está AUTHORIZED o tiene response_code 0
+        is_success = status == "AUTHORIZED" or response_code == 0
+        
+        print(f"🎯 Transacción {'EXITOSA' if is_success else 'FALLIDA'}")
+        return is_success
 
+    def _sanitize_customer_name(self, customer_name: str | None) -> str:
+        """
+        Genera un identificador seguro y compacto para el nombre del cliente.
+        """
+        if not customer_name:
+            return "cliente"
 
-def _tenant_from_session(session_id: Optional[str]) -> TenantConfig:
-    """
-    Devuelve el tenant asociado al session_id de Webpay.
-    Si no se encuentra coincidencia usa el tenant por defecto.
-    """
-    tenant = tenant_manager.tenant_from_session(session_id)
-    return tenant or tenant_manager.default_tenant
+        cleaned = re.sub(r"[^0-9A-Za-z\s-]", "", customer_name).strip()
+        cleaned = re.sub(r"\s+", "-", cleaned)
+        cleaned = cleaned or "cliente"
+
+        # Limitar longitud para respetar restricciones de Webpay (máx. 26 caracteres en total)
+        return cleaned[:12].lower()
+
+    def _normalize_order_date(self, order_date: str | None) -> str:
+        """
+        Normaliza la fecha a formato YYYY-MM-DD.
+        """
+        try:
+            if order_date:
+                parsed = datetime.strptime(order_date, "%Y-%m-%d")
+            else:
+                parsed = datetime.utcnow()
+        except ValueError:
+            parsed = datetime.utcnow()
+        return parsed.strftime("%Y-%m-%d")
+
+    def _build_buy_order(self, customer_label: str, amount: int, date_token: str) -> str:
+        """
+        Construye un buy_order reversible para poder identificar la orden en Odoo.
+        """
+        base_buy_order = f"{customer_label}_{amount}_{date_token}"
+
+        if len(base_buy_order) <= 26:
+            return base_buy_order
+
+        # Ajustar longitud del nombre para respetar la restricción total.
+        static_length = len(str(amount)) + len(date_token) + 2  # guiones bajos
+        available_for_name = max(1, 26 - static_length)
+        trimmed_name = customer_label[:available_for_name]
+        adjusted_buy_order = f"{trimmed_name}_{amount}_{date_token}"
+
+        if len(adjusted_buy_order) <= 26:
+            return adjusted_buy_order
+
+        # Fallback defensivo: usar hash pero mantener los tres componentes legibles.
+        hashed_suffix = abs(hash(base_buy_order)) % 1000000
+        compact_date = date_token[-6:] if len(date_token) >= 6 else date_token
+        hashed_str = str(hashed_suffix)
+        hashed_buy_order = f"w{hashed_str}_{amount}_{compact_date}"
+
+        if len(hashed_buy_order) <= 26:
+            return hashed_buy_order
+
+        overflow = len(hashed_buy_order) - 26
+        if overflow >= len(hashed_str):
+            trimmed_hash = hashed_str[: max(1, len(hashed_str) - 1)]
+        else:
+            trimmed_hash = hashed_str[: len(hashed_str) - overflow]
+
+        adjusted = f"w{trimmed_hash}_{amount}_{compact_date}"
+        return adjusted[:26]
+
+    def _remember_token(self, token: str, tenant: TenantConfig, options: WebpayOptions) -> None:
+        self._token_cache[token] = {
+            "tenant_id": tenant.id,
+            "options": options,
+            "created_at": time.time(),
+        }
+
+    def _options_for_token(self, token: str) -> Tuple[WebpayOptions, Optional[TenantConfig]]:
+        data = self._token_cache.pop(token, None)
+        if not data:
+            return self.default_options, None
+        tenant = tenant_manager.get_tenant_by_id(data.get("tenant_id"))
+        return data.get("options", self.default_options), tenant
+
+    def _get_options_for_tenant(self, tenant: TenantConfig) -> WebpayOptions:
+        if not tenant or not tenant.webpay:
+            return self.default_options
+
+        cached = self._options_cache.get(tenant.id)
+        if cached:
+            return cached
+
+        integration_type = self._map_integration_type(tenant.webpay.environment)
+        options = WebpayOptions(tenant.webpay.commerce_code, tenant.webpay.api_key, integration_type)
+        self._options_cache[tenant.id] = options
+        return options
+
+    @staticmethod
+    def _map_integration_type(environment: Optional[str]) -> IntegrationType:
+        env = (environment or "TEST").upper()
+        if env in {"PROD", "PRODUCTION", "LIVE"}:
+            return IntegrationType.LIVE
+        return IntegrationType.TEST

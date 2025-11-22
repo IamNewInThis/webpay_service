@@ -81,6 +81,7 @@ node_modules/
 bower_components/
 
 # ========================================
-# Documentación generada
+# Comandos para mantener documentos de servidor y docker
 # ========================================
 SERVER.MD
+DOCKER.MD

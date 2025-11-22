@@ -29,30 +29,6 @@ class WebpayService:
     proporcionando una interfaz limpia para inicializar y confirmar transacciones.
     """
     
-<<<<<<< Updated upstream
-    def __init__(self, commerce_code: str | None = None, api_key: str | None = None, environment: str | None = None):
-        """🚀 Inicializa la configuración de Webpay usando credenciales reales o de prueba"""
-        env_flag = (environment or os.getenv("WEBPAY_ENVIRONMENT", "TEST")).upper()
-        env_map = {
-            "DEV": IntegrationType.TEST,
-            "DEVELOPMENT": IntegrationType.TEST,
-            "LIVE": IntegrationType.LIVE,
-            "PROD": IntegrationType.LIVE,
-            "PRODUCTION": IntegrationType.LIVE,
-            "TEST": IntegrationType.TEST,
-            "CERTIFICATION": IntegrationType.CERTIFICATION,
-        }
-
-        self.commerce_code = commerce_code or os.getenv("WEBPAY_COMMERCE_CODE", IntegrationCommerceCodes.WEBPAY_PLUS)
-        self.api_key = api_key or os.getenv("WEBPAY_API_KEY", IntegrationApiKeys.WEBPAY)
-        self.integration_type = env_map.get(env_flag, IntegrationType.TEST)
-        self.options = WebpayOptions(
-            self.commerce_code, 
-            self.api_key, 
-            self.integration_type
-        )
-        print(f"🔧 WebpayService inicializado en modo {self.integration_type.name}")
-=======
     def __init__(self):
         """🚀 Inicializa la configuración base de Webpay (modo TEST por defecto)"""
         default_commerce = os.getenv("WEBPAY_COMMERCE_CODE") or IntegrationCommerceCodes.WEBPAY_PLUS
@@ -68,7 +44,6 @@ class WebpayService:
         self._options_cache: Dict[str, WebpayOptions] = {}
         self._token_cache: Dict[str, Dict[str, Any]] = {}
         print("🔧 WebpayService inicializado (multi-tenant ready)")
->>>>>>> Stashed changes
     
     def create_transaction(
         self,
