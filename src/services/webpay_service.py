@@ -64,7 +64,7 @@ class WebpayService:
 
             # Generar identificadores únicos para la transacción
             # URL de retorno donde Webpay enviará la respuesta
-            return_url = "https://webpay-service.onrender.com/webpay/commit"
+            return_url = "https://webpay.simpledigitalhost.cl/webpay/init"
             
             # Crear transacción usando el SDK de Transbank
             tx = Transaction(self.options)
