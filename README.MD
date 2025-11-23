@@ -50,7 +50,7 @@ HMAC_SECRET=tu-secreto-hmac-super-seguro-aqui
 TIMESTAMP_TOLERANCE=300
 
 # 🌐 Configuración del servicio
-SERVICE_BASE_URL=https://tu-servicio.onrender.com
+SERVICE_BASE_URL=https://tu-servicio.com
 LOG_LEVEL=INFO
 ```
 
@@ -227,7 +227,7 @@ webpay_service/
 
 ### URL de prueba Webpay
 ```
-https://webpay3gint.transbank.cl/webpayserver/initTransaction?token_ws=01ab3321e3f70dedc382e6a09d54a9665bd6422d4eedf6bcf407a43b00a0a3e1
+https://webpay3gint.transbank.cl/webpayserver/initTransaction?token_ws=01abca1bfc5d9ec68ba3a356c9f1b5a1d1369d868203e8b59caf4ec4b6d16357
 ```
 
 ### Tarjeta de prueba

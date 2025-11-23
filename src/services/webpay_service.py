@@ -15,6 +15,8 @@ from transbank.common.integration_type import IntegrationType
 from transbank.common.options import WebpayOptions
 from transbank.webpay.webpay_plus.transaction import Transaction
 
+from src.config import settings
+
 
 class WebpayService:
     """
@@ -30,10 +32,11 @@ class WebpayService:
         self.api_key = IntegrationApiKeys.WEBPAY
         self.integration_type = IntegrationType.TEST
         self.options = WebpayOptions(
-            self.commerce_code, 
-            self.api_key, 
-            self.integration_type
+            self.commerce_code,
+            self.api_key,
+            self.integration_type,
         )
+        self.return_url = settings.WEBPAY_RETURN_URL
         print("🔧 WebpayService inicializado en modo TEST")
     
     def create_transaction(self, amount: int, customer_name: str = None, order_date: str = None) -> Dict[str, Any]:
@@ -64,7 +67,7 @@ class WebpayService:
 
             # Generar identificadores únicos para la transacción
             # URL de retorno donde Webpay enviará la respuesta
-            return_url = "https://webpay.simpledigitalhost.cl/webpay/init"
+            return_url = self.return_url
             
             # Crear transacción usando el SDK de Transbank
             tx = Transaction(self.options)
