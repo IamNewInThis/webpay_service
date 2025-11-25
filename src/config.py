@@ -7,24 +7,28 @@ Centraliza todas las constantes y configuraciones del microservicio.
 import os
 from typing import List
 
+from src.tenants import tenant_manager
+
+
 class Settings:
     """
     🔧 Configuraciones centralizadas del servicio
     
     Maneja variables de entorno, URLs, y configuraciones por defecto.
     """
+
+    _default_tenant = tenant_manager.default_tenant
     
     # 🌐 Configuración de CORS
-    # 🏪 URLs de Odoo
-    ODOO_BASE_URL: str = os.getenv("ODOO_URL", "https://tecnogrow-webpay.odoo.com")
-    
-    ALLOWED_ORIGINS: List[str] = [
-        ODOO_BASE_URL,
-        "http://localhost:3000", 
+    ALLOWED_ORIGINS: List[str] = tenant_manager.all_allowed_origins() or [
+        "http://localhost:3000",
+        "http://localhost:8000",
     ]
     
-    ODOO_SUCCESS_URL: str = f"{ODOO_BASE_URL}/shop/confirmation"
-    ODOO_PAYMENT_URL: str = f"{ODOO_BASE_URL}/shop/payment"
+    # 🏪 URLs de Odoo tomadas del tenant principal
+    ODOO_BASE_URL: str = _default_tenant.odoo.base_url
+    ODOO_SUCCESS_URL: str = _default_tenant.odoo.success_url
+    ODOO_PAYMENT_URL: str = _default_tenant.odoo.payment_url
     
     # 🚀 Configuración del servidor
     SERVICE_NAME: str = "Webpay Service"

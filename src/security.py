@@ -14,10 +14,12 @@ import hmac
 import hashlib
 import time
 import os
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from fastapi import Header, HTTPException, Request, status
 from fastapi.security import APIKeyHeader
 from dotenv import load_dotenv
+
+from src.tenants import tenant_manager, TenantConfig
 
 load_dotenv()
 
@@ -27,15 +29,6 @@ HMAC_SECRET = os.getenv("HMAC_SECRET", "")
 
 # ⏰ Ventana de tiempo para validar timestamps (5 minutos)
 TIMESTAMP_TOLERANCE = 300
-
-# 🌐 Orígenes permitidos (dominios autorizados para llamar al middleware)
-ODOO_URL = os.getenv("ODOO_URL", "https://tecnogrow-webpay.odoo.com")
-
-ALLOWED_ORIGINS: List[str] = [
-    ODOO_URL,
-    "https://tecnogrow.odoo.com",
-    "http://localhost:8000",  # Para desarrollo
-]
 
 # 🔒 Token interno para comunicación middleware ↔ Odoo
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "")
@@ -117,29 +110,16 @@ async def verify_origin(request: Request) -> str:
     # Normalizar origen (remover trailing slash)
     origin = origin.rstrip("/")
     
-    # Verificar si el origen está en la lista permitida
-    # Soportar wildcards simples (https://*.odoo.com)
-    origin_allowed = False
-    for allowed in ALLOWED_ORIGINS:
-        if allowed == origin:
-            origin_allowed = True
-            break
-        # Soporte para wildcards básico
-        if "*" in allowed:
-            pattern = allowed.replace("*", ".*").replace(".", r"\.")
-            import re
-            if re.match(pattern, origin):
-                origin_allowed = True
-                break
+    tenant = tenant_manager.get_tenant_by_origin(origin)
     
-    if not origin_allowed:
+    if not tenant:
         print(f"❌ Origen no permitido: {origin}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Origen no permitido: {origin}"
         )
     
-    print(f"✅ Origen verificado: {origin}")
+    print(f"✅ Origen verificado: {origin} -> tenant {tenant.id}")
     return origin
 
 
@@ -317,6 +297,13 @@ async def verify_frontend_request(request: Request) -> Dict[str, Any]:
     """
     # Verificar origen
     origin = await verify_origin(request)
+    tenant: Optional[TenantConfig] = tenant_manager.get_tenant_by_origin(origin)
+    
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"No hay tenant registrado para el origen {origin}"
+        )
     
     # Obtener timestamp (opcional, pero recomendado)
     timestamp_header = request.headers.get("X-Timestamp")
@@ -337,7 +324,8 @@ async def verify_frontend_request(request: Request) -> Dict[str, Any]:
     return {
         "origin": origin,
         "timestamp_valid": timestamp_valid,
-        "timestamp": timestamp_header
+        "timestamp": timestamp_header,
+        "tenant": tenant,
     }
 
 

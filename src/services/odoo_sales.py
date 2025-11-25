@@ -8,7 +8,7 @@ Basado en el código funcional de sale.py con autenticación JSON-RPC.
 
 import os
 import requests
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, Optional, List
 from dotenv import load_dotenv
 
 # Cargar variables de entorno
@@ -30,12 +30,9 @@ class OdooSalesService:
     - Token interno opcional para auditoría de requests
     """
     
-    def __init__(self):
-        """🚀 Inicializa la configuración de Odoo desde variables de entorno"""
-        self.odoo_url = os.getenv("ODOO_URL")
-        self.database = os.getenv("ODOO_DATABASE")
-        self.username = os.getenv("ODOO_USERNAME")
-        self.password = os.getenv("ODOO_PASSWORD")
+    def __init__(self, credentials: Optional[Any] = None):
+        """🚀 Inicializa la configuración de Odoo desde variables de entorno o credenciales provistas"""
+        self._apply_credentials(credentials)
         self.internal_token = os.getenv("INTERNAL_TOKEN", "")
         
         # 💳 Configuración de Webpay
@@ -46,6 +43,29 @@ class OdooSalesService:
         self.session = requests.Session()
         self._provider_cache: Dict[str, int] = {}
         self._payment_method_cache: Dict[int, int] = {}
+
+    def _apply_credentials(self, credentials: Optional[Any]) -> None:
+        """
+        Asigna credenciales dinámicas. Soporta dataclasses y diccionarios.
+        """
+        if credentials is None:
+            self.odoo_url = os.getenv("ODOO_URL")
+            self.database = os.getenv("ODOO_DATABASE")
+            self.username = os.getenv("ODOO_USERNAME")
+            self.password = os.getenv("ODOO_PASSWORD")
+            return
+
+        def _get_value(attr: str) -> Optional[str]:
+            if hasattr(credentials, attr):
+                return getattr(credentials, attr)
+            if isinstance(credentials, dict):
+                return credentials.get(attr)
+            return None
+
+        self.odoo_url = (_get_value("base_url") or "").rstrip("/")
+        self.database = _get_value("database") or ""
+        self.username = _get_value("username") or ""
+        self.password = _get_value("password") or ""
         
     def authenticate(self) -> bool:
         """
