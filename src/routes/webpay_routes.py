@@ -1,270 +1,300 @@
 """
-🏦 Servicio de Webpay Plus
-========================
-Maneja toda la lógica de negocio relacionada con transacciones de Webpay Plus.
-Abstrae la configuración y operaciones del SDK de Transbank.
+Rutas del servicio Webpay.
+
+Expone los endpoints `POST /webpay/init` y `/webpay/commit` (GET/POST) que la
+aplicación principal importa como `webpay_router`.
 """
 
-import os
-import re
-import time
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional
 
-from transbank.common.integration_api_keys import IntegrationApiKeys
-from transbank.common.integration_commerce_codes import IntegrationCommerceCodes
-from transbank.common.integration_type import IntegrationType
-from transbank.common.options import WebpayOptions
-from transbank.webpay.webpay_plus.transaction import Transaction
+from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel, Field, validator
 
-from src.config import settings
+from src.security import verify_api_key, verify_frontend_request
+from src.services.odoo_sales import OdooSalesService
+from src.services.webpay_service import WebpayService
 from src.tenants import TenantConfig, tenant_manager
 
-# 🌍 Obtener URL de Odoo desde variable de entorno
-ODOO_URL = os.getenv("ODOO_URL", "https://tecnogrow-webpay.odoo.com")
+
+class WebpayInitRequest(BaseModel):
+    """Payload recibido al inicializar una transacción."""
+
+    amount: int = Field(..., gt=0, description="Monto total en pesos chilenos")
+    customer_name: Optional[str] = Field(None, description="Nombre del comprador")
+    order_date: Optional[str] = Field(
+        None, description="Fecha de la orden en formato YYYY-MM-DD"
+    )
+    tenant_id: Optional[str] = Field(
+        None, description="Forzar tenant específico (opcional)"
+    )
+
+    @validator("order_date")
+    def _validate_order_date(cls, value: Optional[str]) -> Optional[str]:
+        if not value:
+            return value
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError("order_date debe usar el formato YYYY-MM-DD") from exc
+        return value
 
 
-class WebpayService:
+webpay_router = APIRouter(prefix="/webpay", tags=["webpay"])
+webpay_service = WebpayService()
+
+
+@webpay_router.post("/init", dependencies=[Depends(verify_api_key)])
+async def init_transaction(
+    payload: WebpayInitRequest,
+    _security_ctx: Dict[str, Any] = Depends(verify_frontend_request),
+) -> Dict[str, Any]:
     """
-    🔧 Servicio para manejar transacciones Webpay Plus
-    
-    Encapsula toda la configuración y operaciones del SDK de Transbank,
-    proporcionando una interfaz limpia para inicializar y confirmar transacciones.
+    Crea una transacción en Webpay Plus para el tenant detectado por origen.
     """
-    
-    def __init__(self, commerce_code: str | None = None, api_key: str | None = None, environment: str | None = None):
-        """🚀 Inicializa la configuración de Webpay usando credenciales reales o de prueba"""
-        env_flag = (environment or os.getenv("WEBPAY_ENVIRONMENT", "TEST")).upper()
-        env_map = {
-            "DEV": IntegrationType.TEST,
-            "DEVELOPMENT": IntegrationType.TEST,
-            "LIVE": IntegrationType.LIVE,
-            "PROD": IntegrationType.LIVE,
-            "PRODUCTION": IntegrationType.LIVE,
-            "TEST": IntegrationType.TEST,
-            "CERTIFICATION": IntegrationType.CERTIFICATION,
-        }
+    tenant = _resolve_tenant(payload.tenant_id, _security_ctx.get("tenant"))
 
-        self.commerce_code = commerce_code or os.getenv("WEBPAY_COMMERCE_CODE", IntegrationCommerceCodes.WEBPAY_PLUS)
-        self.api_key = api_key or os.getenv("WEBPAY_API_KEY", IntegrationApiKeys.WEBPAY)
-        self.integration_type = env_map.get(env_flag, IntegrationType.TEST)
-        self.options = WebpayOptions(
-            self.commerce_code, 
-            self.api_key, 
-            self.integration_type
+    try:
+        result = webpay_service.create_transaction(
+            amount=payload.amount,
+            customer_name=payload.customer_name,
+            order_date=payload.order_date,
+            tenant=tenant,
         )
-        print(f"🔧 WebpayService inicializado en modo {self.integration_type.name}")
-    
-    def create_transaction(
-        self,
-        amount: int,
-        customer_name: str | None = None,
-        order_date: str | None = None,
-        tenant: Optional[TenantConfig] = None,
-    ) -> Dict[str, Any]:
-        """
-        💳 Crea una nueva transacción en Webpay
-        
-        Args:
-            amount: Monto en pesos chilenos (entero)
-            customer_name: Nombre del cliente (opcional)
-            order_date: Fecha de la orden (opcional)
-            
-        Returns:
-            Dict con 'token' y 'url' para redireccionar al usuario
-        """
-        try:
-            try:
-                normalized_amount = int(float(amount))
-            except (TypeError, ValueError):
-                normalized_amount = 0
+    except Exception as exc:  # pragma: no cover - FastAPI captura el detalle
+        raise HTTPException(
+            status_code=500, detail=f"No se pudo iniciar la transacción: {exc}"
+        ) from exc
 
-            # 🔤 Preparar identificadores reutilizables para el commit
-            customer_label = self._sanitize_customer_name(customer_name)
-            order_date_str = self._normalize_order_date(order_date)
-            date_token = order_date_str.replace("-", "")
+    return {
+        "success": True,
+        "tenant_id": tenant.id,
+        "token": result.get("token"),
+        "session_id": result.get("session_id"),
+        "buy_order": result.get("buy_order"),
+        "redirect_url": result.get("url"),
+        "return_url": webpay_service.return_url,
+        "webpay_response": result,
+    }
 
-            buy_order = self._build_buy_order(customer_label, normalized_amount, date_token)
-            tenant = tenant or tenant_manager.default_tenant
-            raw_session = f"S-{abs(hash((buy_order, normalized_amount))) % 1000000}"
-            session_id = tenant_manager.build_session_id(tenant, raw_session)
-            options = self._get_options_for_tenant(tenant)
-            
-            # Crear transacción usando el SDK de Transbank
-            tx = Transaction(options)
-            response = tx.create(buy_order, session_id, normalized_amount, self.return_url)
 
-            # Enriquecer respuesta original para facilitar auditoría
-            response.update(
-                {
-                    "buy_order": buy_order,
-                    "session_id": session_id,
-                    "customer_name": customer_label.replace("-", " "),
-                    "order_date": order_date_str,
-                    "tenant_id": tenant.id,
-                }
+@webpay_router.get("/commit")
+async def commit_transaction_get(
+    token_ws: Optional[str] = None,
+    tbk_token: Optional[str] = None,
+    tbk_orden_compra: Optional[str] = None,
+    tbk_id_sesion: Optional[str] = None,
+) -> JSONResponse:
+    """
+    Endpoint auxiliar para pruebas (GET). Devuelve el resultado en JSON.
+    """
+    commit_result = await _finalize_commit_flow(
+        token_ws=token_ws,
+        tbk_token=tbk_token,
+        tbk_buy_order=tbk_orden_compra,
+        tbk_session=tbk_id_sesion,
+    )
+    return JSONResponse(commit_result)
+
+
+@webpay_router.post("/commit")
+async def commit_transaction_post(
+    token_ws: Optional[str] = Form(None),
+    tbk_token: Optional[str] = Form(None),
+    tbk_orden_compra: Optional[str] = Form(None),
+    tbk_id_sesion: Optional[str] = Form(None),
+) -> RedirectResponse:
+    """
+    Recibe la confirmación de Webpay (POST). Redirige al frontend del tenant.
+    """
+    commit_result = await _finalize_commit_flow(
+        token_ws=token_ws,
+        tbk_token=tbk_token,
+        tbk_buy_order=tbk_orden_compra,
+        tbk_session=tbk_id_sesion,
+    )
+    return RedirectResponse(commit_result["redirect_url"], status_code=303)
+
+
+def _resolve_tenant(
+    requested_id: Optional[str], fallback: Optional[TenantConfig]
+) -> TenantConfig:
+    if requested_id:
+        tenant = tenant_manager.get_tenant_by_id(requested_id)
+        if not tenant:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Tenant '{requested_id}' no está configurado",
             )
+        return tenant
+    if fallback:
+        return fallback
+    return tenant_manager.default_tenant
 
-            token = response.get("token")
-            if token:
-                self._remember_token(token, tenant, options)
-            else:
-                print("⚠️ Respuesta de Webpay sin token - no se pudo registrar cache")
-            
-            print(f"🔸 Transacción creada - Orden: {buy_order}, Monto: ${normalized_amount}")
-            print(f"🔸 Token: {response.get('token', 'N/A')}")
-            
-            return response
-            
-        except Exception as e:
-            print(f"❌ Error creando transacción: {str(e)}")
-            raise e
-    
-    def commit_transaction(self, token: str) -> Dict[str, Any]:
-        """
-        ✅ Confirma una transacción usando el token de Webpay
-        
-        Args:
-            token: Token ws devuelto por Webpay después del pago
-            
-        Returns:
-            Dict con el resultado de la transacción (status, buy_order, amount, etc.)
-        """
-        try:
-            options, cached_tenant = self._options_for_token(token)
-            tx = Transaction(options)
-            result = tx.commit(token)
-            if cached_tenant:
-                result["tenant_id"] = cached_tenant.id
-            
-            # Log detallado del resultado
-            status = result.get("status")
-            response_code = result.get("response_code")
-            buy_order = result.get("buy_order")
-            amount = result.get("amount")
-            
-            print(f"✅ Transacción confirmada - Orden: {buy_order}")
-            print(f"🔍 Status: {status}, Response Code: {response_code}")
-            print(f"💰 Monto: ${amount}")
-            
-            return result
-            
-        except Exception as e:
-            print(f"❌ Error confirmando transacción: {str(e)}")
-            raise e
-    
-    def is_transaction_successful(self, transaction_result: Dict[str, Any]) -> bool:
-        """
-        🎯 Determina si una transacción fue exitosa
-        
-        Args:
-            transaction_result: Resultado devuelto por commit_transaction
-            
-        Returns:
-            True si la transacción fue autorizada exitosamente
-        """
-        status = transaction_result.get("status")
-        response_code = transaction_result.get("response_code")
-        
-        # Una transacción es exitosa si está AUTHORIZED o tiene response_code 0
-        is_success = status == "AUTHORIZED" or response_code == 0
-        
-        print(f"🎯 Transacción {'EXITOSA' if is_success else 'FALLIDA'}")
-        return is_success
 
-    def _sanitize_customer_name(self, customer_name: str | None) -> str:
-        """
-        Genera un identificador seguro y compacto para el nombre del cliente.
-        """
-        if not customer_name:
-            return "cliente"
+async def _finalize_commit_flow(
+    token_ws: Optional[str],
+    tbk_token: Optional[str],
+    tbk_buy_order: Optional[str],
+    tbk_session: Optional[str],
+) -> Dict[str, Any]:
+    tenant = tenant_manager.tenant_from_session(tbk_session) or tenant_manager.default_tenant
 
-        cleaned = re.sub(r"[^0-9A-Za-z\s-]", "", customer_name).strip()
-        cleaned = re.sub(r"\s+", "-", cleaned)
-        cleaned = cleaned or "cliente"
-
-        # Limitar longitud para respetar restricciones de Webpay (máx. 26 caracteres en total)
-        return cleaned[:12].lower()
-
-    def _normalize_order_date(self, order_date: str | None) -> str:
-        """
-        Normaliza la fecha a formato YYYY-MM-DD.
-        """
-        try:
-            if order_date:
-                parsed = datetime.strptime(order_date, "%Y-%m-%d")
-            else:
-                parsed = datetime.utcnow()
-        except ValueError:
-            parsed = datetime.utcnow()
-        return parsed.strftime("%Y-%m-%d")
-
-    def _build_buy_order(self, customer_label: str, amount: int, date_token: str) -> str:
-        """
-        Construye un buy_order reversible para poder identificar la orden en Odoo.
-        """
-        base_buy_order = f"{customer_label}_{amount}_{date_token}"
-
-        if len(base_buy_order) <= 26:
-            return base_buy_order
-
-        # Ajustar longitud del nombre para respetar la restricción total.
-        static_length = len(str(amount)) + len(date_token) + 2  # guiones bajos
-        available_for_name = max(1, 26 - static_length)
-        trimmed_name = customer_label[:available_for_name]
-        adjusted_buy_order = f"{trimmed_name}_{amount}_{date_token}"
-
-        if len(adjusted_buy_order) <= 26:
-            return adjusted_buy_order
-
-        # Fallback defensivo: usar hash pero mantener los tres componentes legibles.
-        hashed_suffix = abs(hash(base_buy_order)) % 1000000
-        compact_date = date_token[-6:] if len(date_token) >= 6 else date_token
-        hashed_str = str(hashed_suffix)
-        hashed_buy_order = f"w{hashed_str}_{amount}_{compact_date}"
-
-        if len(hashed_buy_order) <= 26:
-            return hashed_buy_order
-
-        overflow = len(hashed_buy_order) - 26
-        if overflow >= len(hashed_str):
-            trimmed_hash = hashed_str[: max(1, len(hashed_str) - 1)]
-        else:
-            trimmed_hash = hashed_str[: len(hashed_str) - overflow]
-
-        adjusted = f"w{trimmed_hash}_{amount}_{compact_date}"
-        return adjusted[:26]
-
-    def _remember_token(self, token: str, tenant: TenantConfig, options: WebpayOptions) -> None:
-        self._token_cache[token] = {
-            "tenant_id": tenant.id,
-            "options": options,
-            "created_at": time.time(),
+    if not token_ws:
+        status = "cancelled" if tbk_token else "error"
+        redirect_url = _build_redirect_url(tenant, status, tbk_buy_order)
+        return {
+            "success": False,
+            "status": status,
+            "redirect_url": redirect_url,
+            "transaction": None,
         }
 
-    def _options_for_token(self, token: str) -> Tuple[WebpayOptions, Optional[TenantConfig]]:
-        data = self._token_cache.pop(token, None)
-        if not data:
-            return self.default_options, None
-        tenant = tenant_manager.get_tenant_by_id(data.get("tenant_id"))
-        return data.get("options", self.default_options), tenant
+    try:
+        transaction = webpay_service.commit_transaction(token_ws)
+    except Exception as exc:  # pragma: no cover - dependemos del SDK
+        print(f"❌ Error confirmando token {token_ws}: {exc}")
+        redirect_url = _build_redirect_url(tenant, "error", tbk_buy_order)
+        return {
+            "success": False,
+            "status": "error",
+            "redirect_url": redirect_url,
+            "transaction": None,
+        }
 
-    def _get_options_for_tenant(self, tenant: TenantConfig) -> WebpayOptions:
-        if not tenant or not tenant.webpay:
-            return self.default_options
+    tenant = _tenant_from_transaction(transaction, tenant)
+    success = webpay_service.is_transaction_successful(transaction)
+    status = "success" if success else "rejected"
 
-        cached = self._options_cache.get(tenant.id)
-        if cached:
-            return cached
+    if success:
+        _sync_transaction_with_odoo(tenant, transaction, success)
 
-        integration_type = self._map_integration_type(tenant.webpay.environment)
-        options = WebpayOptions(tenant.webpay.commerce_code, tenant.webpay.api_key, integration_type)
-        self._options_cache[tenant.id] = options
-        return options
+    redirect_url = _build_redirect_url(
+        tenant, status, transaction.get("buy_order") or tbk_buy_order
+    )
+    return {
+        "success": success,
+        "status": status,
+        "redirect_url": redirect_url,
+        "transaction": transaction,
+    }
 
-    @staticmethod
-    def _map_integration_type(environment: Optional[str]) -> IntegrationType:
-        env = (environment or "TEST").upper()
-        if env in {"PROD", "PRODUCTION", "LIVE"}:
-            return IntegrationType.LIVE
-        return IntegrationType.TEST
+
+def _tenant_from_transaction(
+    transaction: Dict[str, Any], fallback: TenantConfig
+) -> TenantConfig:
+    tenant_id = transaction.get("tenant_id")
+    if tenant_id:
+        tenant = tenant_manager.get_tenant_by_id(tenant_id)
+        if tenant:
+            return tenant
+
+    session_id = transaction.get("session_id")
+    if session_id:
+        tenant = tenant_manager.tenant_from_session(session_id)
+        if tenant:
+            return tenant
+
+    return fallback
+
+
+def _build_redirect_url(
+    tenant: TenantConfig, status: str, buy_order: Optional[str]
+) -> str:
+    if status == "success" and buy_order:
+        return tenant.build_success_url(buy_order)
+    return tenant.build_payment_status_url(status)
+
+
+def _sync_transaction_with_odoo(
+    tenant: TenantConfig, transaction: Dict[str, Any], success: bool
+) -> None:
+    """
+    Envía los datos del commit a Odoo para actualizar la orden y registrar la transacción.
+    """
+    try:
+        order_context = _parse_buy_order(transaction.get("buy_order"))
+        order_amount = transaction.get("amount") or order_context.get("amount")
+        try:
+            normalized_amount = int(order_amount) if order_amount is not None else 0
+        except (TypeError, ValueError):
+            normalized_amount = 0
+
+        odoo_service = OdooSalesService(tenant.odoo)
+        order = odoo_service.find_order_by_criteria(
+            customer_name=order_context.get("customer_hint") or "",
+            amount=normalized_amount,
+            order_date=order_context.get("order_date") or "",
+        )
+
+        if not order:
+            print("⚠️ No se encontró una orden que coincida con el buy_order recibido")
+            return
+
+        payment_payload = _build_payment_payload(transaction)
+        odoo_service.update_order_payment_status(order["id"], payment_payload)
+        odoo_service.register_webpay_transaction(
+            order_id=order["id"],
+            order_name=order.get("name") or transaction.get("buy_order") or "Webpay",
+            amount=normalized_amount or transaction.get("amount") or 0,
+            status="done" if success else "error",
+            payment_data=payment_payload,
+            order_data=order,
+        )
+    except Exception as exc:  # pragma: no cover - integra servicios externos
+        print(f"⚠️ Error sincronizando la transacción con Odoo: {exc}")
+
+
+def _parse_buy_order(buy_order: Optional[str]) -> Dict[str, Optional[Any]]:
+    if not buy_order:
+        return {"customer_hint": None, "amount": None, "order_date": None}
+
+    parts = buy_order.split("_")
+    if len(parts) < 3:
+        return {
+            "customer_hint": buy_order.replace("-", " ").strip(),
+            "amount": None,
+            "order_date": None,
+        }
+
+    amount = None
+    try:
+        amount = int(parts[1])
+    except (TypeError, ValueError):
+        pass
+
+    return {
+        "customer_hint": parts[0].replace("-", " ").strip() or None,
+        "amount": amount,
+        "order_date": _format_date_token(parts[2]),
+    }
+
+
+def _format_date_token(token: Optional[str]) -> Optional[str]:
+    if not token:
+        return None
+
+    digits = "".join(ch for ch in token if ch.isdigit())
+    if len(digits) == 8:
+        return f"{digits[0:4]}-{digits[4:6]}-{digits[6:8]}"
+    if len(digits) == 6:
+        return f"20{digits[0:2]}-{digits[2:4]}-{digits[4:6]}"
+    return None
+
+
+def _build_payment_payload(transaction: Dict[str, Any]) -> Dict[str, Any]:
+    card_detail = transaction.get("card_detail") or {}
+    return {
+        "buy_order": transaction.get("buy_order"),
+        "session_id": transaction.get("session_id"),
+        "status": transaction.get("status"),
+        "response_code": transaction.get("response_code"),
+        "authorization_code": transaction.get("authorization_code"),
+        "payment_type_code": transaction.get("payment_type_code"),
+        "card_number": card_detail.get("card_number"),
+        "accounting_date": transaction.get("accounting_date"),
+        "transaction_date": transaction.get("transaction_date"),
+    }
