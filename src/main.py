@@ -36,7 +36,7 @@ app = FastAPI(
 )
 
 # 🌐 Configuración de CORS para permitir requests desde Odoo Online
-ODOO_URL = os.getenv("ODOO_URL", "https://tecnogrow-webpay.odoo.com")
+ODOO_URL = os.getenv("ODOO_URL")
 
 app.add_middleware(
     CORSMiddleware,

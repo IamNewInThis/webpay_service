@@ -16,7 +16,7 @@ class Settings:
     
     # 🌐 Configuración de CORS
     # 🏪 URLs de Odoo
-    ODOO_BASE_URL: str = os.getenv("ODOO_URL", "https://tecnogrow-webpay.odoo.com")
+    ODOO_BASE_URL: str = os.getenv("ODOO_URL")
     
     ALLOWED_ORIGINS: List[str] = [
         ODOO_BASE_URL,
