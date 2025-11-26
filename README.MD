@@ -49,6 +49,10 @@ API_KEY=tu-api-key-segura-aqui
 HMAC_SECRET=tu-secreto-hmac-super-seguro-aqui
 TIMESTAMP_TOLERANCE=300
 
+# Configuracion de odoo
+WEBPAY_PROVIDER_ID=20
+WEBPAY_PAYMENT_METHOD_ID=209
+
 # 🌐 Configuración del servicio
 SERVICE_BASE_URL=https://tu-servicio.onrender.com
 LOG_LEVEL=INFO
