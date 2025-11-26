@@ -53,6 +53,8 @@ TIMESTAMP_TOLERANCE=300
 WEBPAY_ENVIRONMENT=TEST
 WEBPAY_COMMERCE_CODE=5970XXXXXXXX
 WEBPAY_API_KEY=tu-api-key-webpay
+WEBPAY_PROVIDER_ID=25
+WEBPAY_PAYMENT_METHOD_ID=211
 
 # 🌐 Configuración del servicio
 SERVICE_BASE_URL=https://tu-servicio.com
@@ -73,7 +75,9 @@ TENANT_CONFIGS='[
     "webpay": {
       "commerce_code": "***tu-commerce-code***",
       "api_key": "***tu-api-key-webpay***",
-      "environment": "PROD"
+      "environment": "PROD",
+      "provider_id": 00,
+      "payment_method_id": 000
     }
   },
   {
@@ -92,13 +96,15 @@ TENANT_CONFIGS='[
     "webpay": {
       "commerce_code": "***tu-commerce-code***",
       "api_key": "***tu-api-key-webpay***",
-      "environment": "TEST"
+      "environment": "TEST",
+      "provider_id": 00,
+      "payment_method_id": 000
     }
   }
 ]'
 ```
 
-> Si `TENANT_CONFIGS` no está definido, el servicio utilizará las variables `ODOO_*` y `WEBPAY_*` del `.env` como tenant por defecto. Cada origen definido se valida automáticamente en CORS y en el middleware `verify_frontend_request`, y el ambiente de Webpay se determina con `WEBPAY_ENVIRONMENT` (`TEST` o `PROD`).
+> Si `TENANT_CONFIGS` no está definido, el servicio utilizará las variables `ODOO_*` y `WEBPAY_*` del `.env` como tenant por defecto. Cada origen definido se valida automáticamente en CORS y en el middleware `verify_frontend_request`, y el ambiente de Webpay se determina con `WEBPAY_ENVIRONMENT` (`TEST` o `PROD`). Adicionalmente, cada tenant puede definir `provider_id` y `payment_method_id` para registrar pagos en Odoo con los IDs correctos del diario.
 
 ### 3. Instalación de dependencias
 

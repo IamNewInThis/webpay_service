@@ -12,6 +12,7 @@ Creación de payments.
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Dict, Any, Optional
 from src.services.odoo_sales import OdooSalesService
+from src.tenants import tenant_manager
 from src.security import verify_api_key, verify_hmac_dependency
 from pydantic import BaseModel
 
@@ -22,8 +23,12 @@ odoo_router = APIRouter(
     dependencies=[Depends(verify_api_key)]  # 🔒 Proteger todas las rutas con API Key
 )
 
-# Instanciar el servicio de Odoo
-odoo_service = OdooSalesService()
+# Instanciar el servicio de Odoo usando el tenant por defecto (o .env tradicional)
+_default_tenant = tenant_manager.default_tenant
+odoo_service = OdooSalesService(
+    credentials=_default_tenant.odoo,
+    webpay_config=_default_tenant.webpay,
+)
 
 class OrderStatusUpdate(BaseModel):
     """📝 Modelo para actualización de estado de orden"""

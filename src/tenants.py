@@ -49,6 +49,8 @@ class WebpayConfig:
     commerce_code: str
     api_key: str
     environment: str = "TEST"
+    provider_id: Optional[int] = None
+    payment_method_id: Optional[int] = None
 
     def is_production(self) -> bool:
         env = (self.environment or "TEST").upper()
@@ -170,6 +172,8 @@ class TenantManager:
                     "commerce_code": os.getenv("WEBPAY_COMMERCE_CODE"),
                     "api_key": os.getenv("WEBPAY_API_KEY"),
                     "environment": os.getenv("WEBPAY_ENVIRONMENT"),
+                    "provider_id": os.getenv("WEBPAY_PROVIDER_ID"),
+                    "payment_method_id": os.getenv("WEBPAY_PAYMENT_METHOD_ID"),
                 }
             ),
         )
@@ -182,10 +186,14 @@ class TenantManager:
             commerce_code = entry.commerce_code
             api_key = entry.api_key
             environment = getattr(entry, "environment", None)
+            provider_id = getattr(entry, "provider_id", None)
+            payment_method_id = getattr(entry, "payment_method_id", None)
         elif isinstance(entry, dict):
             commerce_code = entry.get("commerce_code") or entry.get("commerceCode")
             api_key = entry.get("api_key") or entry.get("apiKey")
             environment = entry.get("environment")
+            provider_id = entry.get("provider_id") or entry.get("providerId")
+            payment_method_id = entry.get("payment_method_id") or entry.get("paymentMethodId")
         else:
             return None
 
@@ -196,7 +204,18 @@ class TenantManager:
             commerce_code=str(commerce_code),
             api_key=str(api_key),
             environment=(environment or "TEST").upper(),
+            provider_id=self._to_int(provider_id),
+            payment_method_id=self._to_int(payment_method_id),
         )
+
+    @staticmethod
+    def _to_int(value: Optional[Any]) -> Optional[int]:
+        if value in (None, ""):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     @property
     def tenants(self) -> List[TenantConfig]:

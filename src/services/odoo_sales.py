@@ -30,14 +30,11 @@ class OdooSalesService:
     - Token interno opcional para auditoría de requests
     """
     
-    def __init__(self, credentials: Optional[Any] = None):
+    def __init__(self, credentials: Optional[Any] = None, webpay_config: Optional[Any] = None):
         """🚀 Inicializa la configuración de Odoo desde variables de entorno o credenciales provistas"""
         self._apply_credentials(credentials)
+        self._apply_webpay_config(webpay_config)
         self.internal_token = os.getenv("INTERNAL_TOKEN", "")
-        
-        # 💳 Configuración de Webpay
-        self.webpay_provider_id = int(os.getenv("WEBPAY_PROVIDER_ID", "25"))
-        self.webpay_payment_method_id = int(os.getenv("WEBPAY_PAYMENT_METHOD_ID", "211"))
         
         self.uid = None  # Se establecerá después de autenticar
         self.session = requests.Session()
@@ -66,6 +63,38 @@ class OdooSalesService:
         self.database = _get_value("database") or ""
         self.username = _get_value("username") or ""
         self.password = _get_value("password") or ""
+
+    def _apply_webpay_config(self, webpay_config: Optional[Any]) -> None:
+        """
+        Asigna configuración de Webpay a nivel de integración con Odoo (provider/method IDs).
+        Permite sobrescribir valores por tenant cuando se pasa la sección webpay del TENANT_CONFIG.
+        """
+        default_provider = int(os.getenv("WEBPAY_PROVIDER_ID", "25"))
+        default_method = int(os.getenv("WEBPAY_PAYMENT_METHOD_ID", "211"))
+
+        def _extract_candidates(candidates: List[str]) -> Optional[Any]:
+            if not webpay_config:
+                return None
+            for key in candidates:
+                if hasattr(webpay_config, key):
+                    return getattr(webpay_config, key)
+                if isinstance(webpay_config, dict) and key in webpay_config:
+                    return webpay_config[key]
+            return None
+
+        def _to_int(value: Optional[Any]) -> Optional[int]:
+            if value in (None, ""):
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        provider_override = _to_int(_extract_candidates(["provider_id", "providerId"]))
+        method_override = _to_int(_extract_candidates(["payment_method_id", "paymentMethodId"]))
+
+        self.webpay_provider_id = provider_override or default_provider
+        self.webpay_payment_method_id = method_override or default_method
         
     def authenticate(self) -> bool:
         """
