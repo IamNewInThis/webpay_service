@@ -220,13 +220,17 @@ class TenantManager:
         else:
             return None
 
+        commerce_code = self._sanitize_secret(commerce_code)
+        api_key = self._sanitize_secret(api_key)
+        environment = (environment or "TEST").upper()
+
         if not commerce_code or not api_key:
             return None
 
         return WebpayConfig(
             commerce_code=str(commerce_code),
             api_key=str(api_key),
-            environment=(environment or "TEST").upper(),
+            environment=environment,
             provider_id=self._to_int(provider_id),
             payment_method_id=self._to_int(payment_method_id),
         )
@@ -282,6 +286,22 @@ class TenantManager:
             return None
         tenant_id = parts[0]
         return self.get_tenant_by_id(tenant_id)
+
+    @staticmethod
+    def _sanitize_secret(value: Optional[Any]) -> Optional[str]:
+        if value in (None, ""):
+            return None
+
+        text = str(value).strip()
+        if not text:
+            return None
+
+        placeholder_markers = ("***", "<", ">", "tu-commerce", "tu-api", "your-")
+        lowered = text.lower()
+        if any(marker in lowered for marker in placeholder_markers):
+            return None
+
+        return text
 
 
 # Instancia global utilizada en el resto del proyecto
