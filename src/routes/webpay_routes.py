@@ -35,7 +35,7 @@ webpay_service = WebpayService()
 odoo_service = OdooSalesService()
 
 # 🌍 Obtener URL de Odoo desde variable de entorno
-ODOO_URL = os.getenv("ODOO_URL")
+ODOO_URL = os.getenv("ODOO_URL", "https://tecnogrow-integration.odoo.com")
 
 
 @webpay_router.post("/init")
