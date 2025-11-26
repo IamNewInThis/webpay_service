@@ -88,17 +88,15 @@ async def commit_transaction_get(
     tbk_token: Optional[str] = None,
     tbk_orden_compra: Optional[str] = None,
     tbk_id_sesion: Optional[str] = None,
-) -> JSONResponse:
-    """
-    Endpoint auxiliar para pruebas (GET). Devuelve el resultado en JSON.
-    """
+) -> RedirectResponse:
+    """Endpoint GET usado por Webpay en ambiente real, redirige al frontend."""
     commit_result = await _finalize_commit_flow(
         token_ws=token_ws,
         tbk_token=tbk_token,
         tbk_buy_order=tbk_orden_compra,
         tbk_session=tbk_id_sesion,
     )
-    return JSONResponse(commit_result)
+    return RedirectResponse(commit_result["redirect_url"], status_code=303)
 
 
 @webpay_router.post("/commit")
