@@ -26,6 +26,12 @@ load_dotenv()
 # 🔑 Configuración de seguridad desde variables de entorno
 API_KEY = os.getenv("API_KEY", "")
 HMAC_SECRET = os.getenv("HMAC_SECRET", "")
+DISABLE_API_KEY_AUTH = os.getenv("DISABLE_API_KEY_AUTH", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 # ⏰ Ventana de tiempo para validar timestamps (5 minutos)
 TIMESTAMP_TOLERANCE = 300
@@ -50,6 +56,12 @@ def verify_api_key(api_key: Optional[str] = Header(None, alias="X-API-Key")) -> 
     Raises:
         HTTPException 401: Si el API Key es inválido o no está presente
     """
+    if DISABLE_API_KEY_AUTH:
+        # Permitir requests sin API Key en entornos donde se deshabilite la validación.
+        if not api_key:
+            print("⚠️ API Key no proporcionada, pero la validación está deshabilitada")
+        return api_key or "api-key-validation-disabled"
+
     if not API_KEY:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
