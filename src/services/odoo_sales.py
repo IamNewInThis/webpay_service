@@ -9,6 +9,7 @@ Basado en el código funcional de sale.py con autenticación JSON-RPC.
 import os
 import requests
 from typing import Any, Dict, Optional, List
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 # Cargar variables de entorno
@@ -46,7 +47,8 @@ class OdooSalesService:
         Asigna credenciales dinámicas. Soporta dataclasses y diccionarios.
         """
         if credentials is None:
-            self.odoo_url = os.getenv("ODOO_URL")
+            raw_url = os.getenv("ODOO_URL")
+            self.odoo_url = self._normalize_jsonrpc_base(raw_url)
             self.database = os.getenv("ODOO_DATABASE")
             self.username = os.getenv("ODOO_USERNAME")
             self.password = os.getenv("ODOO_PASSWORD")
@@ -59,7 +61,8 @@ class OdooSalesService:
                 return credentials.get(attr)
             return None
 
-        self.odoo_url = (_get_value("base_url") or "").rstrip("/")
+        raw_url = _get_value("base_url") or ""
+        self.odoo_url = self._normalize_jsonrpc_base(raw_url)
         self.database = _get_value("database") or ""
         self.username = _get_value("username") or ""
         self.password = _get_value("password") or ""
@@ -95,6 +98,24 @@ class OdooSalesService:
 
         self.webpay_provider_id = provider_override or default_provider
         self.webpay_payment_method_id = method_override or default_method
+
+    @staticmethod
+    def _normalize_jsonrpc_base(url: Optional[str]) -> str:
+        """
+        Normaliza la URL para llamadas JSON-RPC.
+
+        Siempre retorna solo esquema + host porque el endpoint /jsonrpc vive en la raíz,
+        mientras que los sitios Odoo a veces se cargan en /odoo.
+        """
+        value = (url or "").strip()
+        if not value:
+            return ""
+
+        parsed = urlparse(value)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+
+        return value.rstrip("/")
         
     def authenticate(self) -> bool:
         """
