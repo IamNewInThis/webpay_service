@@ -75,6 +75,7 @@ async def init_transaction(
         "token": result.get("token"),
         "session_id": result.get("session_id"),
         "buy_order": result.get("buy_order"),
+        "url": result.get("url"),
         "redirect_url": result.get("url"),
         "return_url": webpay_service.return_url,
         "webpay_response": result,
