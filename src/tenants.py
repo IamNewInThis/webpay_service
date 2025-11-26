@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -71,11 +72,12 @@ class TenantConfig:
     def __post_init__(self) -> None:
         safe_id = re.sub(r"[^0-9a-z\-]", "", (self.id or "").lower())
         self.id = safe_id or "tenant"
-        self.origins = [
-            (origin or "").rstrip("/")
-            for origin in self.origins
-            if origin
-        ]
+        normalized_origins: List[str] = []
+        for origin in self.origins:
+            normalized = self._normalize_origin(origin)
+            if normalized:
+                normalized_origins.append(normalized)
+        self.origins = normalized_origins
 
     def matches_origin(self, origin: Optional[str]) -> bool:
         """Valida si el origen recibido pertenece al tenant."""
@@ -97,6 +99,27 @@ class TenantConfig:
 
     def build_payment_status_url(self, status: str) -> str:
         return f"{self.odoo.payment_url}?status={status}"
+
+    @staticmethod
+    def _normalize_origin(origin: Optional[str]) -> Optional[str]:
+        """
+        Ensure CORS origins only contain scheme + host (+port).
+        A user might configure 'https://domain.com/path', but browsers
+        send the origin without the path, so we trim it here.
+        """
+        value = (origin or "").strip()
+        if not value:
+            return None
+
+        value = value.rstrip("/")
+        if "://" not in value:
+            return value
+
+        parsed = urlparse(value)
+        if parsed.scheme and parsed.netloc:
+            cleaned = f"{parsed.scheme}://{parsed.netloc}"
+            return cleaned.rstrip("/")
+        return value
 
 
 class TenantManager:
