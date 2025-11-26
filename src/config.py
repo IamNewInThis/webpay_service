@@ -33,7 +33,8 @@ class Settings:
     # 🌍 URL del servicio (para return_url de Webpay)
     SERVICE_BASE_URL: str = os.getenv(
         "SERVICE_BASE_URL", 
-        "https://webpay.simpledigitalhost.cl"
+        "https://webpay.simpledigitalhost.cl",
+        "https://webpay-service.onrender.com"
     )
     
     # 🔑 API Keys (desde variables de entorno)
