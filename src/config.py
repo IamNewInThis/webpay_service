@@ -16,7 +16,7 @@ class Settings:
     
     # 🌐 Configuración de CORS
     # 🏪 URLs de Odoo
-    ODOO_BASE_URL: str = os.getenv("ODOO_URL", "https://tecnogrow-integration.odoo.com")
+    ODOO_BASE_URL: str = os.getenv("ODOO_URL")
     
     ALLOWED_ORIGINS: List[str] = [
         ODOO_BASE_URL,
@@ -33,17 +33,16 @@ class Settings:
     # 🌍 URL del servicio (para return_url de Webpay)
     SERVICE_BASE_URL: str = os.getenv(
         "SERVICE_BASE_URL", 
-        "https://webpay.simpledigitalhost.cl",
-        "https://webpay-service.onrender.com"
+        "http://localhost:8000"
     )
     
     # 🔑 API Keys (desde variables de entorno)
-    ODOO_API_KEY: str = os.getenv("ODOO_API_KEY", "")
+    ODOO_API_KEY: str = os.getenv("ODOO_API_KEY")
     
     # 🔒 Configuración de seguridad
-    API_KEY: str = os.getenv("API_KEY", "")
-    HMAC_SECRET: str = os.getenv("HMAC_SECRET", "")
-    TIMESTAMP_TOLERANCE: int = int(os.getenv("TIMESTAMP_TOLERANCE", "300"))  # 5 minutos
+    API_KEY: str = os.getenv("API_KEY")
+    HMAC_SECRET: str = os.getenv("HMAC_SECRET")
+    TIMESTAMP_TOLERANCE: int = int(os.getenv("TIMESTAMP_TOLERANCE")) 
     
     # 🏦 Configuración de Webpay
     WEBPAY_RETURN_URL: str = f"{SERVICE_BASE_URL}/webpay/commit"

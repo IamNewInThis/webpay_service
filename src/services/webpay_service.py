@@ -6,6 +6,7 @@ Abstrae la configuración y operaciones del SDK de Transbank.
 """
 
 import re
+import os
 from datetime import datetime
 from typing import Dict, Any
 
@@ -14,6 +15,8 @@ from transbank.common.integration_commerce_codes import IntegrationCommerceCodes
 from transbank.common.integration_type import IntegrationType
 from transbank.common.options import WebpayOptions
 from transbank.webpay.webpay_plus.transaction import Transaction
+
+from src.config import settings
 
 
 class WebpayService:
@@ -64,7 +67,7 @@ class WebpayService:
 
             # Generar identificadores únicos para la transacción
             # URL de retorno donde Webpay enviará la respuesta
-            return_url = "https://webpay-service.onrender.com/webpay/commit"
+            return_url = settings.WEBPAY_RETURN_URL
             
             # Crear transacción usando el SDK de Transbank
             tx = Transaction(self.options)

@@ -36,11 +36,11 @@ class OdooSalesService:
         self.database = os.getenv("ODOO_DATABASE")
         self.username = os.getenv("ODOO_USERNAME")
         self.password = os.getenv("ODOO_PASSWORD")
-        self.internal_token = os.getenv("INTERNAL_TOKEN", "")
+        self.internal_token = os.getenv("INTERNAL_TOKEN")
         
         # 💳 Configuración de Webpay
-        self.webpay_provider_id = int(os.getenv("WEBPAY_PROVIDER_ID", "25"))
-        self.webpay_payment_method_id = int(os.getenv("WEBPAY_PAYMENT_METHOD_ID", "211"))
+        self.webpay_provider_id = int(os.getenv("WEBPAY_PROVIDER_ID"))
+        self.webpay_payment_method_id = int(os.getenv("WEBPAY_PAYMENT_METHOD_ID"))
         
         self.uid = None  # Se establecerá después de autenticar
         self.session = requests.Session()
