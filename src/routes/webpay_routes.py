@@ -22,7 +22,7 @@ from src.services.odoo_sales import OdooSalesService
 from src.security import verify_api_key, verify_frontend_request
 from src.client_config import ClientConfig, get_client_from_origin
 from src.config import settings
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from datetime import datetime
 import os
 from dotenv import load_dotenv
