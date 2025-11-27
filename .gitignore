@@ -5,6 +5,10 @@
 .env.*
 !.env.example
 
+# 🏢 Configuración de clientes (contiene credenciales)
+clients.yaml
+!clients.yaml.example
+
 # ========================================
 # 🐍 Python
 # ========================================

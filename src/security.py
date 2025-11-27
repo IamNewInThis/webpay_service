@@ -18,6 +18,7 @@ from typing import Optional, Dict, Any, List
 from fastapi import Header, HTTPException, Request, status
 from fastapi.security import APIKeyHeader
 from dotenv import load_dotenv
+from src.client_config import get_client_from_origin, ClientConfig
 
 load_dotenv()
 
@@ -26,16 +27,7 @@ API_KEY = os.getenv("API_KEY", "")
 HMAC_SECRET = os.getenv("HMAC_SECRET", "")
 
 # ⏰ Ventana de tiempo para validar timestamps (5 minutos)
-TIMESTAMP_TOLERANCE = 300
-
-# 🌐 Orígenes permitidos (dominios autorizados para llamar al middleware)
-ODOO_URL = os.getenv("ODOO_URL", "https://tecnogrow-integration.odoo.com")
-
-ALLOWED_ORIGINS: List[str] = [
-    ODOO_URL,
-    "https://tecnogrow.odoo.com",
-    "http://localhost:8000",  # Para desarrollo
-]
+TIMESTAMP_TOLERANCE = int(os.getenv("TIMESTAMP_TOLERANCE", "300"))
 
 # 🔒 Token interno para comunicación middleware ↔ Odoo
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "")
@@ -80,21 +72,22 @@ def verify_api_key(api_key: Optional[str] = Header(None, alias="X-API-Key")) -> 
     return api_key
 
 
-async def verify_origin(request: Request) -> str:
+async def verify_origin(request: Request) -> tuple[str, Optional[ClientConfig]]:
     """
-    🌐 Verifica que el request venga de un origen permitido (dominio autorizado)
+    🌐 Verifica que el request venga de un origen permitido e identifica al cliente
     
-    Esta función protege el middleware de llamadas desde dominios no autorizados.
-    Solo los dominios en ALLOWED_ORIGINS pueden llamar a los endpoints protegidos.
+    Esta función protege el middleware de llamadas no autorizadas y además
+    identifica automáticamente qué cliente está haciendo el request basándose
+    en el dominio de origen.
     
     Args:
         request: Request de FastAPI
         
     Returns:
-        El origen verificado
+        Tupla con (origin, client_config) donde client_config puede ser None
         
     Raises:
-        HTTPException 403: Si el origen no está permitido
+        HTTPException 403: Si el origen no está permitido o no corresponde a ningún cliente
     """
     # Obtener origen del header
     origin = request.headers.get("origin") or request.headers.get("referer", "")
@@ -104,7 +97,13 @@ async def verify_origin(request: Request) -> str:
         host = request.client.host
         if host in ["127.0.0.1", "localhost"]:
             print(f"🔓 Request local permitido desde {host}")
-            return "localhost"
+            # En local, intentar usar el primer cliente activo para testing
+            from src.client_config import client_loader
+            active_clients = client_loader.get_active_clients()
+            if active_clients:
+                print(f"🧪 Usando cliente de desarrollo: {active_clients[0].client_name}")
+                return ("localhost", active_clients[0])
+            return ("localhost", None)
     
     # Si no hay origen y no es local, rechazar
     if not origin:
@@ -114,33 +113,27 @@ async def verify_origin(request: Request) -> str:
             detail="Origen no especificado"
         )
     
-    # Normalizar origen (remover trailing slash)
+    # Normalizar origen (remover trailing slash y extraer dominio base si viene de referer)
     origin = origin.rstrip("/")
     
-    # Verificar si el origen está en la lista permitida
-    # Soportar wildcards simples (https://*.odoo.com)
-    origin_allowed = False
-    for allowed in ALLOWED_ORIGINS:
-        if allowed == origin:
-            origin_allowed = True
-            break
-        # Soporte para wildcards básico
-        if "*" in allowed:
-            pattern = allowed.replace("*", ".*").replace(".", r"\.")
-            import re
-            if re.match(pattern, origin):
-                origin_allowed = True
-                break
+    # Si es un referer completo, extraer solo el origen
+    if origin.count("/") > 2:
+        from urllib.parse import urlparse
+        parsed = urlparse(origin)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
     
-    if not origin_allowed:
-        print(f"❌ Origen no permitido: {origin}")
+    # 🔍 Identificar cliente por origen
+    client = get_client_from_origin(origin)
+    
+    if not client:
+        print(f"❌ Origen no corresponde a ningún cliente configurado: {origin}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Origen no permitido: {origin}"
+            detail=f"Origen no autorizado: {origin}"
         )
     
-    print(f"✅ Origen verificado: {origin}")
-    return origin
+    print(f"✅ Cliente identificado: {client.client_name} ({client.client_id}) desde {origin}")
+    return (origin, client)
 
 
 def generate_hmac_signature(
@@ -300,8 +293,8 @@ async def verify_frontend_request(request: Request) -> Dict[str, Any]:
     
     Verifica:
     1. Origen permitido (dominio Odoo autorizado)
-    2. Timestamp válido (previene replay attacks)
-    3. Opcionalmente: firma ligera si se necesita más seguridad
+    2. Identifica al cliente automáticamente
+    3. Timestamp válido (previene replay attacks)
     
     Uso para endpoints llamados desde el frontend (ej: /webpay/init)
     
@@ -309,14 +302,20 @@ async def verify_frontend_request(request: Request) -> Dict[str, Any]:
         request: Request de FastAPI
         
     Returns:
-        Dict con información de validación
+        Dict con información de validación y configuración del cliente
         
     Raises:
         HTTPException 403: Si el origen no está permitido
         HTTPException 401: Si el timestamp es inválido
     """
-    # Verificar origen
-    origin = await verify_origin(request)
+    # Verificar origen e identificar cliente
+    origin, client = await verify_origin(request)
+    
+    if not client:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cliente no identificado"
+        )
     
     # Obtener timestamp (opcional, pero recomendado)
     timestamp_header = request.headers.get("X-Timestamp")
@@ -336,6 +335,9 @@ async def verify_frontend_request(request: Request) -> Dict[str, Any]:
     
     return {
         "origin": origin,
+        "client": client,
+        "client_id": client.client_id,
+        "client_name": client.client_name,
         "timestamp_valid": timestamp_valid,
         "timestamp": timestamp_header
     }

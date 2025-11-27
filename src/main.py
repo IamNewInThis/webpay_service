@@ -25,29 +25,24 @@ load_dotenv()
 # Importar routers organizados
 from src.routes.webpay_routes import webpay_router
 from src.routes.odoo_routes import odoo_router
+from src.config import settings
 
 # 🏗️ Configuración de la aplicación FastAPI
 app = FastAPI(
     title="Webpay Service API",
-    description="Microservicio para procesamiento de pagos con Webpay Plus",
+    description="Microservicio para procesamiento de pagos con Webpay Plus - Multi-tenant",
     version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
 
-# 🌐 Configuración de CORS para permitir requests desde Odoo Online
-ODOO_URL = os.getenv("ODOO_URL", "https://tecnogrow-integration.odoo.com")
+# 🌐 Configuración de CORS multi-cliente
+# Obtiene automáticamente todos los orígenes permitidos de los clientes configurados
+cors_config = settings.get_cors_config()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        ODOO_URL,  
-        "https://*.odoo.com",               
-        "http://localhost:8000",            
-    ],
-    allow_credentials=True,                   # Permitir cookies y headers de auth
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Métodos HTTP permitidos
-    allow_headers=["*"],                      # Permitir todos los headers
+    **cors_config
 )
 
 app.include_router(webpay_router)  # Rutas de Webpay (/webpay/*)
@@ -63,12 +58,17 @@ async def root():
     Útil para health checks y monitoreo de la aplicación.
     
     Returns:
-        {"status": "ok", "message": "...", "version": "..."}
+        {"status": "ok", "message": "...", "version": "...", "clients_count": ...}
     """
+    from src.client_config import client_loader
+    active_clients = client_loader.get_active_clients()
+    
     return {
         "status": "ok",
-        "message": "Webpay Service operativo",
+        "message": "Webpay Service operativo - Multi-tenant",
         "version": "2.0.0",
+        "clients_count": len(active_clients),
+        "clients": [c.client_name for c in active_clients]
     }
 
 

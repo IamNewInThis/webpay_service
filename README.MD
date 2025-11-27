@@ -1,9 +1,11 @@
-# Webpay Service
+# Webpay Service - Multi-Tenant
 
-Microservicio basado en FastAPI que expone endpoints de integración con Webpay Plus de Transbank y sincronización automática con Odoo ERP. El servicio permite iniciar transacciones, recibir confirmaciones de Webpay y actualizar automáticamente las órdenes de venta en Odoo.
+Microservicio basado en FastAPI que expone endpoints de integración con Webpay Plus de Transbank y sincronización automática con Odoo ERP. El servicio **soporta múltiples clientes** en una única instancia, identificando automáticamente al cliente por el dominio de origen.
 
 ## 🚀 Características principales
 
+- ✅ **Multi-tenant (múltiples clientes)** - Un servidor para todos tus clientes
+- ✅ **Identificación automática de cliente** - Por dominio de origen
 - ✅ **Integración completa con Webpay Plus** - Manejo de transacciones de pago
 - ✅ **Sincronización automática con Odoo** - Actualización de órdenes de venta
 - ✅ **Gestión de transacciones** - Registro y seguimiento de pagos
@@ -16,7 +18,7 @@ Microservicio basado en FastAPI que expone endpoints de integración con Webpay 
 - Python 3.10 o superior (`python3 --version`)
 - `pip` actualizado (`python3 -m pip install --upgrade pip`)
 - Acceso a internet para instalar dependencias
-- Variables de entorno configuradas para Odoo (ver sección de configuración)
+- Archivo `clients.yaml` configurado con tus clientes (ver sección de configuración)
 
 ## 🔧 Configuración del entorno
 
@@ -33,32 +35,7 @@ Microservicio basado en FastAPI que expone endpoints de integración con Webpay 
 
 Para desactivar el entorno basta con ejecutar `deactivate`.
 
-### 2. Variables de entorno
-
-Crear un archivo `.env` en la raíz del proyecto con las siguientes variables:
-
-```bash
-# 🔑 Configuración de Odoo
-ODOO_URL=https://tu-instancia.odoo.com
-ODOO_DATABASE=tu_base_de_datos
-ODOO_USERNAME=tu_usuario
-ODOO_PASSWORD=tu_contraseña
-
-# 🔒 Configuración de seguridad
-API_KEY=tu-api-key-segura-aqui
-HMAC_SECRET=tu-secreto-hmac-super-seguro-aqui
-TIMESTAMP_TOLERANCE=300
-
-# Configuracion de odoo
-WEBPAY_PROVIDER_ID=20
-WEBPAY_PAYMENT_METHOD_ID=209
-
-# 🌐 Configuración del servicio
-SERVICE_BASE_URL=https://tu-servicio.onrender.com
-LOG_LEVEL=INFO
-```
-
-### 3. Instalación de dependencias
+### 2. Instalación de dependencias
 
 Con el entorno activo instala los paquetes necesarios:
 
@@ -66,24 +43,90 @@ Con el entorno activo instala los paquetes necesarios:
 pip install -r requirements.txt
 ```
 
-Puedes congelar la lista para despliegues posteriores:
+### 3. Configuración de variables globales (.env)
+
+Crear un archivo `.env` en la raíz del proyecto con la **configuración global** del servicio:
 
 ```bash
-pip freeze > requirements.txt
+# 🔒 Configuración de seguridad global
+API_KEY=tu-api-key-segura-aqui
+HMAC_SECRET=tu-secreto-hmac-super-seguro-aqui
+INTERNAL_TOKEN=middleware-odoo-secure-token-2025
+TIMESTAMP_TOLERANCE=300
+
+# 🌐 Configuración del servicio
+SERVICE_BASE_URL=https://tu-servicio.com
+LOG_LEVEL=INFO
 ```
+
+### 4. Configuración de clientes (clients.yaml)
+
+**⚠️ NUEVO EN v2.0.0**: Las credenciales específicas de cada cliente ahora se configuran en `clients.yaml`
+
+1. Copia el archivo de ejemplo:
+```bash
+cp clients.yaml.example clients.yaml
+```
+
+2. Edita `clients.yaml` y configura tus clientes:
+
+```yaml
+clients:
+  tecnogrow:
+    client_id: "tecnogrow"
+    client_name: "Tecnogrow"
+    
+    # Dominios permitidos (para CORS y identificación)
+    allowed_origins:
+      - "https://tecnogrow-integration.odoo.com"
+      - "https://tecnogrow.odoo.com"
+    
+    # Configuración de Odoo
+    odoo:
+      url: "https://tecnogrow-integration.odoo.com"
+      database: "tecnogrow-integration"
+      username: "admin@tecnogrow.cl"
+      password: "tu_password"
+    
+    # Configuración de Webpay
+    webpay:
+      provider_id: 20
+      payment_method_id: 209
+    
+    enabled: true
+
+  # Puedes agregar más clientes aquí
+  cliente2:
+    client_id: "cliente2"
+    client_name: "Cliente 2 S.A."
+    allowed_origins:
+      - "https://cliente2.odoo.com"
+    odoo:
+      url: "https://cliente2.odoo.com"
+      database: "cliente2-prod"
+      username: "admin@cliente2.com"
+      password: "otro_password"
+    webpay:
+      provider_id: 25
+      payment_method_id: 215
+    enabled: true
+```
+
+**📖 Documentación completa**: Ver [MULTI_TENANT.md](MULTI_TENANT.md) para detalles sobre configuración multi-cliente.
 
 ## 🚀 Ejecutar el microservicio
 
 1. Asegúrate de tener el entorno virtual activo.
-2. Configura las variables de entorno necesarias.
-3. Inicia el servidor de desarrollo:
+2. Configura las variables de entorno necesarias (`.env`).
+3. Configura tus clientes en `clients.yaml`.
+4. Inicia el servidor de desarrollo:
 
 ```bash
 uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-4. Abre `http://localhost:8000` para verificar el estado.
-5. La documentación interactiva de FastAPI está disponible en `http://localhost:8000/docs`.
+5. Abre `http://localhost:8000` para verificar el estado.
+6. La documentación interactiva de FastAPI está disponible en `http://localhost:8000/docs`.
 
 ## 📊 Endpoints disponibles
 
@@ -91,18 +134,30 @@ uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 
 | Método | Ruta       | Descripción                                    | Autenticación |
 |--------|------------|------------------------------------------------|---------------|
-| GET    | `/`        | Verifica que el microservicio esté operativo  | ❌ No         |
+| GET    | `/`        | Verifica que el microservicio esté operativo y lista clientes activos | ❌ No |
 | GET    | `/health`  | Health check detallado del sistema            | ❌ No         |
+
+**Respuesta de `/`:**
+```json
+{
+  "status": "ok",
+  "message": "Webpay Service operativo - Multi-tenant",
+  "version": "2.0.0",
+  "clients_count": 2,
+  "clients": ["Tecnogrow", "Cliente 2 S.A."]
+}
+```
 
 ### 💳 Endpoints de Webpay
 
 | Método | Ruta             | Descripción                                               | Autenticación |
 |--------|------------------|-----------------------------------------------------------|---------------|
-| POST   | `/webpay/init`   | Crea un token de transacción contra el ambiente de prueba| ✅ API Key    |
-| POST   | `/webpay/commit` | Recibe el callback de Webpay (método POST)              | ❌ No*        |
-| GET    | `/webpay/commit` | Maneja respuestas de Webpay vía GET                      | ❌ No*        |
+| POST   | `/webpay/init`   | Crea un token de transacción (identifica cliente automáticamente) | ✅ Origin*   |
+| POST   | `/webpay/commit` | Recibe el callback de Webpay (método POST)              | ❌ No**        |
+| GET    | `/webpay/commit` | Maneja respuestas de Webpay vía GET                      | ❌ No**        |
 
-*Los endpoints de commit no requieren autenticación porque son llamados directamente por Transbank.
+*Autenticación por origen: El sistema identifica al cliente por el dominio del header `Origin`
+**Los endpoints de commit no requieren autenticación porque son llamados directamente por Transbank.
 
 ### 🏪 Endpoints de Odoo
 
@@ -118,26 +173,59 @@ uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 
 ## 🔄 Flujo de integración completo
 
-### 1. Flujo de pago estándar
+### 1. Flujo de pago multi-tenant
 
-1. **Inicialización**: Invoca `POST /webpay/init` con:
-   ```json
-   {
-     "amount": 10000,
-     "customer_name": "Juan Pérez",
-     "order_date": "2025-10-30"
-   }
+1. **Frontend de Odoo hace la llamada**: Desde JavaScript en el sitio de Odoo
+   ```javascript
+   fetch('https://tu-servicio.com/webpay/init', {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify({
+       amount: 10000,
+       customer_name: "Juan Pérez",
+       order_date: "2025-11-26"
+     })
+   })
    ```
 
-2. **Redirección**: Utiliza el `token` y la `url` para redirigir al cliente al formulario Webpay.
+2. **Identificación automática**: El sistema:
+   - Lee el header `Origin` (ej: `https://tecnogrow-integration.odoo.com`)
+   - Identifica que corresponde al cliente "Tecnogrow"
+   - Usa las credenciales específicas de Tecnogrow
 
-3. **Confirmación**: Webpay envía la respuesta al endpoint `/webpay/commit`.
+3. **Redirección a Webpay**: Utiliza el `token` y la `url` para redirigir al formulario Webpay.
 
-4. **Sincronización automática**: El sistema:
-   - Busca la orden correspondiente en Odoo
+4. **Confirmación automática**: Webpay envía la respuesta al endpoint `/webpay/commit`.
+
+5. **Sincronización con Odoo del cliente correcto**: El sistema:
+   - Identifica al cliente desde el resultado
+   - Busca la orden en el Odoo correspondiente
    - Actualiza el estado de la orden a 'sale'
    - Registra la transacción de pago
    - Vincula la transacción con la orden
+
+### 2. Agregar un nuevo cliente
+
+Simplemente edita `clients.yaml` y agrega el nuevo bloque:
+
+```yaml
+nuevo_cliente:
+  client_id: "nuevo_cliente"
+  client_name: "Nuevo Cliente S.A."
+  allowed_origins:
+    - "https://nuevo-cliente.odoo.com"
+  odoo:
+    url: "https://nuevo-cliente.odoo.com"
+    database: "nuevo-cliente-db"
+    username: "admin@nuevo-cliente.com"
+    password: "password_seguro"
+  webpay:
+    provider_id: 30
+    payment_method_id: 220
+  enabled: true
+```
+
+No se requiere reiniciar el servidor (opcional hot-reload).
 
 ### 2. Búsqueda manual de órdenes
 
@@ -161,50 +249,49 @@ POST /odoo/payments/create
 }
 ```
 
-## ⚠️ CONFIGURACIÓN CRÍTICA - ODOO PAYMENT PROVIDERS
+## ⚠️ CONFIGURACIÓN CRÍTICA - WEBPAY PROVIDERS POR CLIENTE
 
-> **⚠️ IMPORTANTE**: Las siguientes variables son fundamentales para el correcto funcionamiento del servicio:
+> **⚠️ IMPORTANTE**: Cada cliente debe tener configurados correctamente sus IDs de provider y método de pago en `clients.yaml`:
 
-```python
-provider_id = 00        # Provider Webpay configurado en Odoo
-payment_method_id = 000 # Método de pago Webpay configurado en Odoo
+```yaml
+webpay:
+  provider_id: 20        # ID del provider Webpay en Odoo del cliente
+  payment_method_id: 209 # ID del método de pago Webpay en Odoo del cliente
 ```
 
-**DEBE VERIFICAR Y ACTUALIZAR** estos valores en el archivo `src/services/odoo_sales.py` según la configuración específica de su instancia de Odoo:
+### 🔍 Cómo obtener los IDs correctos para cada cliente:
 
-1. **provider_id**: ID del proveedor de pago Webpay en su configuración de Odoo
-2. **payment_method_id**: ID del método de pago Webpay en su configuración de Odoo
+1. Acceder a la instancia de Odoo del cliente
+2. Ir a **Facturación > Configuración > Proveedores de pago**
+3. Buscar el proveedor "Webpay" y anotar su ID
+4. En **Contabilidad > Configuración > Métodos de pago**, buscar "Webpay" y anotar su ID
+5. Actualizar los valores en `clients.yaml` para ese cliente
 
-### 🔍 Cómo obtener los IDs correctos:
+**❌ Si estos valores son incorrectos, las transacciones NO se registrarán correctamente en Odoo del cliente.**
 
-1. En Odoo, ir a **Facturación > Configuración > Proveedores de pago**
-2. Buscar el proveedor "Webpay" y anotar su ID
-3. En **Contabilidad > Configuración > Métodos de pago**, buscar "Webpay" y anotar su ID
-4. Actualizar las variables en el código antes del despliegue
-
-**❌ Si estos valores son incorrectos, las transacciones NO se registrarán correctamente en Odoo.**
-
-## 🏗️ Estructura del proyecto actualizada
+## 🏗️ Estructura del proyecto actualizada (v2.0.0)
 
 ```
 webpay_service/
-├── README.MD
-├── requirements.txt
-├── .env                     # Variables de entorno (no versionado)
+├── README.MD                # Documentación principal
+├── MULTI_TENANT.md          # 🆕 Guía de configuración multi-cliente
+├── requirements.txt         # Dependencias Python (incluye PyYAML)
+├── .env                     # Variables globales (no versionado)
 ├── .gitignore
+├── clients.yaml             # 🆕 Configuración de clientes (no versionado)
+├── clients.yaml.example     # 🆕 Plantilla de configuración
 ├── src/
 │   ├── __init__.py
 │   ├── main.py             # Aplicación principal FastAPI
-│   ├── config.py           # Configuraciones centralizadas
-│   ├── security.py         # 🔒 Módulo de seguridad (API Key + HMAC)
+│   ├── config.py           # Configuraciones centralizadas (multi-tenant)
+│   ├── client_config.py    # 🆕 Gestión de configuración de clientes
+│   ├── security.py         # 🔒 Módulo de seguridad (identifica clientes)
 │   ├── routes/
-│   │   ├── webpay_routes.py    # Endpoints de Webpay
+│   │   ├── webpay_routes.py    # Endpoints de Webpay (multi-tenant)
 │   │   └── odoo_routes.py      # Endpoints de Odoo (protegidos)
 │   ├── services/
 │   │   ├── webpay_service.py   # Lógica de Webpay
-│   │   └── odoo_sales.py       # Integración con Odoo
-├── tests/
-│   └── test_security.py    # 🧪 Tests de seguridad
+│   │   └── odoo_sales.py       # Integración con Odoo (multi-tenant)
 └── venv/                   # Entorno virtual (no versionado)
 ```
 
@@ -249,12 +336,21 @@ Clave: 123
 
 ## 🚀 Próximas mejoras
 
-- [ ] Manejo de múltiples proveedores de pago
+- [x] **Configuración multi-tenant** - Múltiples clientes en un servidor
+- [x] **Identificación automática de cliente** - Por dominio de origen
+- [ ] Manejo de múltiples proveedores de pago por cliente
 - [ ] Dashboard de monitoreo de transacciones
 - [ ] Notificaciones automáticas por email
 - [ ] Integración con webhooks de Odoo
 - [ ] Tests automatizados completos
 - [ ] Métricas y logging avanzado
+- [ ] Hot-reload de configuración sin reiniciar
+
+## 📚 Documentación adicional
+
+- **[MULTI_TENANT.md](MULTI_TENANT.md)** - Guía completa de configuración multi-cliente
+- **[clients.yaml.example](clients.yaml.example)** - Plantilla de configuración
+- **/docs** - Documentación interactiva de la API (cuando el servidor está ejecutándose)
 
 ## url de prueba
 https://webpay3gint.transbank.cl/webpayserver/initTransaction?token_ws=01ab3321e3f70dedc382e6a09d54a9665bd6422d4eedf6bcf407a43b00a0a3e1

@@ -10,6 +10,7 @@ import os
 import requests
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
+from src.client_config import ClientConfig
 
 # Cargar variables de entorno
 load_dotenv()
@@ -28,20 +29,43 @@ class OdooSalesService:
     - Todas las claves sensibles (API_KEY, HMAC_SECRET) se mantienen en el middleware
     - Las credenciales de Odoo se usan solo para JSON-RPC
     - Token interno opcional para auditoría de requests
+    
+    🏢 Multi-tenant:
+    - Recibe ClientConfig con las credenciales específicas del cliente
+    - Cada instancia se vincula a un cliente específico
     """
     
-    def __init__(self):
-        """🚀 Inicializa la configuración de Odoo desde variables de entorno"""
-        self.odoo_url = os.getenv("ODOO_URL")
-        self.database = os.getenv("ODOO_DATABASE")
-        self.username = os.getenv("ODOO_USERNAME")
-        self.password = os.getenv("ODOO_PASSWORD")
+    def __init__(self, client_config: Optional[ClientConfig] = None):
+        """
+        🚀 Inicializa el servicio con configuración de un cliente específico
+        
+        Args:
+            client_config: Configuración del cliente. Si es None, usa variables de entorno (legacy)
+        """
+        if client_config:
+            # Configuración multi-tenant desde YAML
+            self.odoo_url = client_config.odoo.url
+            self.database = client_config.odoo.database
+            self.username = client_config.odoo.username
+            self.password = client_config.odoo.password
+            self.webpay_provider_id = client_config.webpay.provider_id
+            self.webpay_payment_method_id = client_config.webpay.payment_method_id
+            self.client_id = client_config.client_id
+            self.client_name = client_config.client_name
+            print(f"🏢 OdooSalesService inicializado para cliente: {self.client_name}")
+        else:
+            # Modo legacy: usar variables de entorno (retrocompatibilidad)
+            self.odoo_url = os.getenv("ODOO_URL")
+            self.database = os.getenv("ODOO_DATABASE")
+            self.username = os.getenv("ODOO_USERNAME")
+            self.password = os.getenv("ODOO_PASSWORD")
+            self.webpay_provider_id = int(os.getenv("WEBPAY_PROVIDER_ID", "0"))
+            self.webpay_payment_method_id = int(os.getenv("WEBPAY_PAYMENT_METHOD_ID", "0"))
+            self.client_id = "default"
+            self.client_name = "Default Client"
+            print("⚠️ OdooSalesService en modo legacy (variables de entorno)")
+        
         self.internal_token = os.getenv("INTERNAL_TOKEN")
-        
-        # 💳 Configuración de Webpay
-        self.webpay_provider_id = int(os.getenv("WEBPAY_PROVIDER_ID"))
-        self.webpay_payment_method_id = int(os.getenv("WEBPAY_PAYMENT_METHOD_ID"))
-        
         self.uid = None  # Se establecerá después de autenticar
         self.session = requests.Session()
         self._provider_cache: Dict[str, int] = {}
