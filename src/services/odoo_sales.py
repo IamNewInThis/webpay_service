@@ -190,6 +190,39 @@ class OdooSalesService:
     #         print(f"❌ Error buscando orden: {str(e)}")
     #         return None
 
+    def get_order_by_name(self, order_name: str) -> Optional[Dict[str, Any]]:
+        if not self.uid:
+            if not self.authenticate():
+                return None
+
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "service": "object",
+                "method": "execute_kw",
+                "args": [
+                    self.database, self.uid, self.password,
+                    "sale.order", "search_read",
+                    [[["name", "=", order_name]]],
+                    {"limit": 1}
+                ]
+            },
+            "id": 42
+        }
+
+        try:
+            response = self.session.post(f"{self.odoo_url}/jsonrpc", json=payload)
+            result = response.json()
+            orders = result.get("result")
+            if orders:
+                return orders[0]
+            return None
+        except Exception as e:
+            print(f"❌ Error buscando orden por name: {e}")
+            return None
+
+
     def update_order_payment_status(self, order_id: int, payment_data: Dict[str, Any]) -> bool:
         """
         💳 Actualiza el estado de pago de una orden específica

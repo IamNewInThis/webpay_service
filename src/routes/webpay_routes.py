@@ -302,6 +302,96 @@ def _identify_client_from_result(payment_result: Dict[str, Any]) -> Optional[Cli
         return None
 
 
+# async def _process_successful_payment(
+#     payment_result: Dict[str, Any],
+#     odoo_service: OdooSalesService,
+#     client: ClientConfig
+# ) -> None:
+#     """
+#     🔄 Procesa un pago exitoso e intenta actualizar la orden en Odoo
+    
+#     Extrae información del buy_order para encontrar la orden correspondiente
+#     en Odoo y actualizar su estado de pago.
+    
+#     Args:
+#         payment_result: Resultado de la transacción de Webpay
+#         odoo_service: Servicio de Odoo ya configurado para el cliente
+#         client: Configuración del cliente
+#     """
+#     try:
+#         buy_order = payment_result.get("buy_order", "") or ""
+#         raw_amount = payment_result.get("amount", 0)
+#         try:
+#             amount = int(float(raw_amount))
+#         except (TypeError, ValueError):
+#             amount = 0
+        
+#         # Extraer datos del buy_order (formato: {customer_name}_{amount}_{date})
+#         parts = buy_order.split("_")
+#         if len(parts) >= 3:
+#             customer_name = parts[0].replace("-", " ").title()  # Reconvertir espacios
+#             order_date = parts[2]  # Formato YYYYMMDD
+            
+#             # Convertir fecha a formato YYYY-MM-DD
+#             try:
+#                 formatted_date = datetime.strptime(order_date, "%Y%m%d").strftime("%Y-%m-%d")
+#             except ValueError:
+#                 formatted_date = datetime.utcnow().strftime("%Y-%m-%d")
+            
+#             print(f"🔍 Buscando orden en Odoo ({client.client_name}) - Cliente: {customer_name}, Monto: {amount}, Fecha: {formatted_date}")
+            
+#             # Buscar orden en Odoo por criterios
+#             order = odoo_service.find_order_by_criteria(
+#                 customer_name=customer_name,
+#                 amount=amount,
+#                 order_date=formatted_date
+#             )
+            
+#             if order:
+#                 # Actualizar estado de la orden
+#                 success = odoo_service.update_order_payment_status(
+#                     order_id=order["id"],
+#                     payment_data=payment_result
+#                 )
+                
+#                 if success:
+#                     print(f"✅ Orden {order['name']} actualizada exitosamente en Odoo")
+                    
+#                     # 💳 Registrar transacción Webpay en Odoo
+#                     tx_status = (
+#                         "done"
+#                         if payment_result.get("status") == "AUTHORIZED"
+#                         or payment_result.get("response_code") == 0
+#                         else "error"
+#                     )
+                    
+#                     registered = odoo_service.register_webpay_transaction(
+#                         order_id=order["id"],
+#                         order_name=order["name"],
+#                         amount=amount,
+#                         status=tx_status,
+#                         payment_data=payment_result,
+#                         order_data=order,
+#                     )
+            
+#                     if registered:
+#                         print(
+#                             f"✅ Transacción Webpay registrada para orden {order['name']} con estado {tx_status}"
+#                         )
+#                     else:
+#                         print(
+#                             f"⚠️ No se pudo registrar la transacción Webpay para orden {order['name']}"
+#                         )
+#                 else:
+#                     print(f"❌ Error actualizando orden {order['name']} en Odoo")
+#             else:
+#                 print(f"⚠️ No se encontró orden correspondiente en Odoo para {client.client_name}")
+#         else:
+#             print(f"⚠️ Formato de buy_order inválido: {buy_order}")
+            
+#     except Exception as e:
+#         print(f"❌ Error procesando pago exitoso: {str(e)}")
+
 async def _process_successful_payment(
     payment_result: Dict[str, Any],
     odoo_service: OdooSalesService,
@@ -309,87 +399,65 @@ async def _process_successful_payment(
 ) -> None:
     """
     🔄 Procesa un pago exitoso e intenta actualizar la orden en Odoo
-    
-    Extrae información del buy_order para encontrar la orden correspondiente
-    en Odoo y actualizar su estado de pago.
-    
-    Args:
-        payment_result: Resultado de la transacción de Webpay
-        odoo_service: Servicio de Odoo ya configurado para el cliente
-        client: Configuración del cliente
+    usando DIRECTAMENTE el buy_order como name de sale.order.
     """
     try:
+        # === Datos base de la transacción ===
         buy_order = payment_result.get("buy_order", "") or ""
         raw_amount = payment_result.get("amount", 0)
+
         try:
             amount = int(float(raw_amount))
         except (TypeError, ValueError):
             amount = 0
-        
-        # Extraer datos del buy_order (formato: {customer_name}_{amount}_{date})
-        parts = buy_order.split("_")
-        if len(parts) >= 3:
-            customer_name = parts[0].replace("-", " ").title()  # Reconvertir espacios
-            order_date = parts[2]  # Formato YYYYMMDD
-            
-            # Convertir fecha a formato YYYY-MM-DD
-            try:
-                formatted_date = datetime.strptime(order_date, "%Y%m%d").strftime("%Y-%m-%d")
-            except ValueError:
-                formatted_date = datetime.utcnow().strftime("%Y-%m-%d")
-            
-            print(f"🔍 Buscando orden en Odoo ({client.client_name}) - Cliente: {customer_name}, Monto: {amount}, Fecha: {formatted_date}")
-            
-            # Buscar orden en Odoo por criterios
-            # TODO: reemplazar por búsqueda directa por name usando order_name enviado desde el frontend.
-            # order = odoo_service.find_order_by_criteria(
-            #     customer_name=customer_name,
-            #     amount=amount,
-            #     order_date=formatted_date
-            # )
-            # 
-            # if order:
-            #     # Actualizar estado de la orden
-            #     success = odoo_service.update_order_payment_status(
-            #         order_id=order["id"],
-            #         payment_data=payment_result
-            #     )
-            #     
-            #     if success:
-            #         print(f"✅ Orden {order['name']} actualizada exitosamente en Odoo")
-            #         
-            #         # 💳 Registrar transacción Webpay en Odoo
-            #         tx_status = (
-            #             "done"
-            #             if payment_result.get("status") == "AUTHORIZED"
-            #             or payment_result.get("response_code") == 0
-            #             else "error"
-            #         )
-            #         
-            #         registered = odoo_service.register_webpay_transaction(
-            #             order_id=order["id"],
-            #             order_name=order["name"],
-            #             amount=amount,
-            #             status=tx_status,
-            #             payment_data=payment_result,
-            #             order_data=order,
-            #         )
-            #
-            #         if registered:
-            #             print(
-            #                 f"✅ Transacción Webpay registrada para orden {order['name']} con estado {tx_status}"
-            #             )
-            #         else:
-            #             print(
-            #                 f"⚠️ No se pudo registrar la transacción Webpay para orden {order['name']}"
-            #             )
-            #     else:
-            #         print(f"❌ Error actualizando orden {order['name']} en Odoo")
-            # else:
-            #     print(f"⚠️ No se encontró orden correspondiente en Odoo para {client.client_name}")
+
+        print(f"🔎 Procesando pago exitoso → buy_order={buy_order}, amount={amount}")
+
+        # === 1️⃣ Buscar la orden EXACTA en Odoo por name ===
+        print(f"🔎 Buscando orden exacta en Odoo name='{buy_order}'")
+        order = odoo_service.get_order_by_name(buy_order)
+
+        if not order:
+            print(f"❌ No se encontró en Odoo la orden '{buy_order}'")
+            return
+
+        print(f"✅ Orden encontrada → ID={order['id']} name={order['name']} state={order['state']}")
+
+        # === 2️⃣ Confirmar la orden o forzar estado "sale" ===
+        success = odoo_service.update_order_payment_status(
+            order_id=order["id"],
+            payment_data=payment_result
+        )
+
+        if not success:
+            print(f"❌ No se pudo confirmar la orden {order['name']}")
+            return
+
+        print(f"💚 Orden {order['name']} confirmada correctamente en Odoo")
+
+        # === 3️⃣ Determinar estado de transacción ===
+        tx_status = (
+            "done"
+            if payment_result.get("status") == "AUTHORIZED"
+            or payment_result.get("response_code") == 0
+            else "error"
+        )
+
+        # === 4️⃣ Registrar transacción Webpay en Odoo ===
+        registered = odoo_service.register_webpay_transaction(
+            order_id=order["id"],
+            order_name=order["name"],
+            amount=order["amount_total"],
+            status=tx_status,
+            payment_data=payment_result,
+            order_data=order,
+        )
+
+        if registered:
+            print(f"💳 Transacción Webpay registrada exitosamente en Odoo para {order['name']}")
         else:
-            print(f"⚠️ Formato de buy_order inválido: {buy_order}")
-            
+            print(f"⚠️ No se pudo registrar la transacción Webpay en Odoo")
+
     except Exception as e:
         print(f"❌ Error procesando pago exitoso: {str(e)}")
-        # No levantamos la excepción para que el pago continue normalmente
+
