@@ -32,9 +32,6 @@ load_dotenv()
 # Crear router para agrupar las rutas de Webpay
 webpay_router = APIRouter(prefix="/webpay", tags=["webpay"])
 
-# Instanciar servicio de Webpay (común para todos)
-webpay_service = WebpayService()
-
 
 @webpay_router.post("/init")
 async def init_webpay_transaction(
@@ -73,6 +70,9 @@ async def init_webpay_transaction(
         
         if not client:
             return {"error": "Cliente no identificado"}
+        
+        # Crear servicio de Webpay específico para este cliente
+        webpay_service = WebpayService(client)
         
         # Extraer datos del request
         data = await request.json()
@@ -126,8 +126,10 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
                 url=f"{fallback_url}/shop/payment?status=cancelled"
             )
         
-        # Confirmar transacción
-        result = webpay_service.commit_transaction(token)
+        # Identificar cliente primero (para crear servicio con su configuración)
+        # Por ahora usamos servicio sin cliente para commit, ya que no tenemos el cliente todavía
+        temp_webpay_service = WebpayService()  # Servicio temporal para commit
+        result = temp_webpay_service.commit_transaction(token)
         
         # Identificar cliente desde el buy_order
         client = _identify_client_from_result(result)
@@ -144,7 +146,7 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
         odoo_url = client.odoo.url
         
         # Si la transacción es exitosa, intentar actualizar orden en Odoo
-        if webpay_service.is_transaction_successful(result):
+        if temp_webpay_service.is_transaction_successful(result):
             # Crear servicio de Odoo específico para este cliente
             odoo_service = OdooSalesService(client)
             
@@ -224,7 +226,9 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
                 )
         
         # Procesar transacción con token_ws
-        result = webpay_service.commit_transaction(token)
+        # Crear servicio temporal de Webpay para commit (sin cliente específico aún)
+        temp_webpay_service = WebpayService()
+        result = temp_webpay_service.commit_transaction(token)
         
         # Identificar cliente desde el resultado
         client_from_result = _identify_client_from_result(result)
@@ -233,7 +237,7 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
             odoo_url = client.odoo.url
         
         # Si la transacción es exitosa, intentar actualizar orden en Odoo
-        if webpay_service.is_transaction_successful(result):
+        if temp_webpay_service.is_transaction_successful(result):
             # Crear servicio de Odoo específico para este cliente
             odoo_service = OdooSalesService(client)
             

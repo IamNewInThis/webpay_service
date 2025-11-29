@@ -3,12 +3,13 @@
 ========================
 Maneja toda la lógica de negocio relacionada con transacciones de Webpay Plus.
 Abstrae la configuración y operaciones del SDK de Transbank.
+Soporta múltiples clientes con configuración dinámica.
 """
 
 import re
 import os
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from transbank.common.integration_api_keys import IntegrationApiKeys
 from transbank.common.integration_commerce_codes import IntegrationCommerceCodes
@@ -17,6 +18,7 @@ from transbank.common.options import WebpayOptions
 from transbank.webpay.webpay_plus.transaction import Transaction
 
 from src.config import settings
+from src.client_config import ClientConfig
 
 
 class WebpayService:
@@ -25,19 +27,57 @@ class WebpayService:
     
     Encapsula toda la configuración y operaciones del SDK de Transbank,
     proporcionando una interfaz limpia para inicializar y confirmar transacciones.
+    Soporta configuración dinámica por cliente (TEST, CERTIFICATION, PRODUCTION).
     """
     
-    def __init__(self):
-        """🚀 Inicializa la configuración de Webpay en modo TEST"""
-        self.commerce_code = IntegrationCommerceCodes.WEBPAY_PLUS
-        self.api_key = IntegrationApiKeys.WEBPAY
-        self.integration_type = IntegrationType.TEST
+    def __init__(self, client_config: Optional[ClientConfig] = None):
+        """
+        🚀 Inicializa la configuración de Webpay
+        
+        Args:
+            client_config: Configuración del cliente. Si es None, usa modo TEST por defecto.
+        """
+        if client_config and client_config.webpay:
+            # Configuración específica del cliente
+            webpay_config = client_config.webpay
+            integration_type = webpay_config.integration_type.upper()
+            
+            if integration_type == "TEST":
+                self.commerce_code = IntegrationCommerceCodes.WEBPAY_PLUS
+                self.api_key = IntegrationApiKeys.WEBPAY
+                self.integration_type = IntegrationType.TEST
+                print(f"🔧 WebpayService inicializado para {client_config.client_name} en modo TEST")
+                
+            elif integration_type == "CERTIFICATION":
+                if not webpay_config.commerce_code or not webpay_config.api_key:
+                    raise ValueError(f"commerce_code y api_key requeridos para CERTIFICATION")
+                self.commerce_code = webpay_config.commerce_code
+                self.api_key = webpay_config.api_key
+                self.integration_type = IntegrationType.TEST  # CERTIFICATION usa TEST environment
+                print(f"🔧 WebpayService inicializado para {client_config.client_name} en modo CERTIFICATION")
+                
+            elif integration_type == "PRODUCTION":
+                if not webpay_config.commerce_code or not webpay_config.api_key:
+                    raise ValueError(f"commerce_code y api_key requeridos para PRODUCTION")
+                self.commerce_code = webpay_config.commerce_code
+                self.api_key = webpay_config.api_key
+                self.integration_type = IntegrationType.LIVE
+                print(f"🔧 WebpayService inicializado para {client_config.client_name} en modo PRODUCTION")
+                
+            else:
+                raise ValueError(f"integration_type inválido: {integration_type}. Usa TEST, CERTIFICATION o PRODUCTION")
+        else:
+            # Modo por defecto: TEST
+            self.commerce_code = IntegrationCommerceCodes.WEBPAY_PLUS
+            self.api_key = IntegrationApiKeys.WEBPAY
+            self.integration_type = IntegrationType.TEST
+            print("🔧 WebpayService inicializado en modo TEST (sin cliente)")
+        
         self.options = WebpayOptions(
             self.commerce_code, 
             self.api_key, 
             self.integration_type
         )
-        print("🔧 WebpayService inicializado en modo TEST")
     
     def create_transaction(self, amount: int, customer_name: str = None, order_date: str = None) -> Dict[str, Any]:
         """

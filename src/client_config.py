@@ -33,6 +33,17 @@ class WebpayConfig:
     """💳 Configuración de Webpay para un cliente"""
     provider_id: int
     payment_method_id: int
+    integration_type: str = "TEST"  # TEST, CERTIFICATION, PRODUCTION
+    commerce_code: Optional[str] = None  # Requerido para CERTIFICATION/PRODUCTION
+    api_key: Optional[str] = None  # Requerido para CERTIFICATION/PRODUCTION
+    
+    def __post_init__(self):
+        """Valida que commerce_code y api_key estén presentes si no es TEST"""
+        if self.integration_type in ["CERTIFICATION", "PRODUCTION"]:
+            if not self.commerce_code or not self.api_key:
+                raise ValueError(
+                    f"commerce_code y api_key son requeridos para integration_type={self.integration_type}"
+                )
 
 
 @dataclass
