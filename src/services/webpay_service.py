@@ -81,7 +81,13 @@ class WebpayService:
         print(f"🧩 DEBUG CONFIG → integration_type={self.integration_type} commerce_code={self.commerce_code} api_key_len={len(self.api_key) if self.api_key else 0}")
 
     
-    def create_transaction(self, amount: int, customer_name: str = None, order_date: str = None) -> Dict[str, Any]:
+    def create_transaction(
+        self,
+        amount: int,
+        customer_name: str = None,
+        order_date: str = None,
+        order_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         💳 Crea una nueva transacción en Webpay
         
@@ -89,6 +95,7 @@ class WebpayService:
             amount: Monto en pesos chilenos (entero)
             customer_name: Nombre del cliente (opcional)
             order_date: Fecha de la orden (opcional)
+            order_name: Código interno de la orden en Odoo (preferible para buscar después)
             
         Returns:
             Dict con 'token' y 'url' para redireccionar al usuario
@@ -104,7 +111,15 @@ class WebpayService:
             order_date_str = self._normalize_order_date(order_date)
             date_token = order_date_str.replace("-", "")
 
-            buy_order = self._build_buy_order(customer_label, normalized_amount, date_token)
+            buy_order = self._build_buy_order(
+                customer_label=customer_label,
+                amount=normalized_amount,
+                date_token=date_token,
+                order_name=order_name,
+            )
+
+            if order_name and buy_order == str(order_name).strip():
+                print(f"🔸 buy_order fijado desde order_name: {buy_order}")
             session_id = f"S-{abs(hash((buy_order, normalized_amount))) % 1000000}"
 
             # Generar identificadores únicos para la transacción
@@ -218,10 +233,26 @@ class WebpayService:
             parsed = datetime.utcnow()
         return parsed.strftime("%Y-%m-%d")
 
-    def _build_buy_order(self, customer_label: str, amount: int, date_token: str) -> str:
+    def _build_buy_order(
+        self,
+        customer_label: str,
+        amount: int,
+        date_token: str,
+        order_name: Optional[str] = None,
+    ) -> str:
         """
         Construye un buy_order reversible para poder identificar la orden en Odoo.
+        Prioriza el order_name si viene del frontend y cabe en los 26 caracteres permitidos.
         """
+        if order_name:
+            candidate = str(order_name).strip()
+            if candidate:
+                if len(candidate) <= 26:
+                    return candidate
+                print(
+                    f"⚠️ order_name '{candidate}' excede 26 caracteres, se usará identificador alternativo"
+                )
+
         base_buy_order = f"{customer_label}_{amount}_{date_token}"
 
         if len(base_buy_order) <= 26:

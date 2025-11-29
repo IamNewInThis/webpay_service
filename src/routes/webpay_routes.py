@@ -79,6 +79,7 @@ async def init_webpay_transaction(
         amount = data.get("amount", 1000)
         customer_name = data.get("customer_name", "Cliente")
         order_date = data.get("order_date")
+        order_name = data.get("order_name")
         
         print(f"💳 Iniciando transacción para cliente: {client.client_name}")
         print(f"   Cliente final: {customer_name}, Monto: ${amount}")
@@ -87,7 +88,8 @@ async def init_webpay_transaction(
         response = webpay_service.create_transaction(
             amount=amount,
             customer_name=customer_name,
-            order_date=order_date
+            order_date=order_date,
+            order_name=order_name
         )
         
         return response
@@ -460,4 +462,3 @@ async def _process_successful_payment(
 
     except Exception as e:
         print(f"❌ Error procesando pago exitoso: {str(e)}")
-
