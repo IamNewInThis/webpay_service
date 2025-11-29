@@ -29,60 +29,60 @@ class OrderStatusUpdate(BaseModel):
     """📝 Modelo para actualización de estado de orden"""
     status: str
 
-@odoo_router.get("/orders/search")
-async def search_orders(
-    customer_name: Optional[str] = Query(None, description="Nombre del cliente"),
-    amount: Optional[int] = Query(None, description="Monto de la orden"),
-    order_date: Optional[str] = Query(None, description="Fecha de la orden (YYYY-MM-DD)")
-) -> Dict[str, Any]:
-    """
-    🔎 Busca órdenes por criterios específicos
-    
-    Permite buscar órdenes usando diferentes filtros como
-    nombre del cliente, monto y fecha de la orden.
-    
-    Query Parameters:
-        customer_name: Nombre del cliente (búsqueda parcial)
-        amount: Monto exacto de la orden
-        order_date: Fecha de la orden en formato YYYY-MM-DD
-    
-    Returns:
-        Orden encontrada o información de no encontrada
-    """
-    try:
-        # Validar que al menos un criterio sea proporcionado
-        if not any([customer_name, amount, order_date]):
-            raise HTTPException(
-                status_code=400,
-                detail="Debe proporcionar al menos un criterio de búsqueda"
-            )
-        
-        order = odoo_service.find_order_by_criteria(
-            customer_name=customer_name,
-            amount=amount,
-            order_date=order_date
-        )
-        
-        if order:
-            return {
-                "success": True,
-                "found": True,
-                "order": order
-            }
-        else:
-            return {
-                "success": True,
-                "found": False,
-                "message": "No se encontró orden con los criterios especificados"
-            }
-            
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error buscando órdenes: {str(e)}"
-        )
+# @odoo_router.get("/orders/search")
+# async def search_orders(
+#     customer_name: Optional[str] = Query(None, description="Nombre del cliente"),
+#     amount: Optional[int] = Query(None, description="Monto de la orden"),
+#     order_date: Optional[str] = Query(None, description="Fecha de la orden (YYYY-MM-DD)")
+# ) -> Dict[str, Any]:
+#     """
+#     🔎 Busca órdenes por criterios específicos
+#     
+#     Permite buscar órdenes usando diferentes filtros como
+#     nombre del cliente, monto y fecha de la orden.
+#     
+#     Query Parameters:
+#         customer_name: Nombre del cliente (búsqueda parcial)
+#         amount: Monto exacto de la orden
+#         order_date: Fecha de la orden en formato YYYY-MM-DD
+#     
+#     Returns:
+#         Orden encontrada o información de no encontrada
+#     """
+#     try:
+#         # Validar que al menos un criterio sea proporcionado
+#         if not any([customer_name, amount, order_date]):
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="Debe proporcionar al menos un criterio de búsqueda"
+#             )
+#         
+#         order = odoo_service.find_order_by_criteria(
+#             customer_name=customer_name,
+#             amount=amount,
+#             order_date=order_date
+#         )
+#         
+#         if order:
+#             return {
+#                 "success": True,
+#                 "found": True,
+#                 "order": order
+#             }
+#         else:
+#             return {
+#                 "success": True,
+#                 "found": False,
+#                 "message": "No se encontró orden con los criterios especificados"
+#             }
+#             
+#     except HTTPException:
+#         raise  # Re-raise HTTP exceptions
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"Error buscando órdenes: {str(e)}"
+#         )
 
 @odoo_router.get("/orders/{order_id}")
 async def get_order_details(order_id: int) -> Dict[str, Any]:

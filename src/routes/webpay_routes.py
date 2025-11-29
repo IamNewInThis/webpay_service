@@ -341,51 +341,52 @@ async def _process_successful_payment(
             print(f"🔍 Buscando orden en Odoo ({client.client_name}) - Cliente: {customer_name}, Monto: {amount}, Fecha: {formatted_date}")
             
             # Buscar orden en Odoo por criterios
-            order = odoo_service.find_order_by_criteria(
-                customer_name=customer_name,
-                amount=amount,
-                order_date=formatted_date
-            )
-            
-            if order:
-                # Actualizar estado de la orden
-                success = odoo_service.update_order_payment_status(
-                    order_id=order["id"],
-                    payment_data=payment_result
-                )
-                
-                if success:
-                    print(f"✅ Orden {order['name']} actualizada exitosamente en Odoo")
-                    
-                    # 💳 Registrar transacción Webpay en Odoo
-                    tx_status = (
-                        "done"
-                        if payment_result.get("status") == "AUTHORIZED"
-                        or payment_result.get("response_code") == 0
-                        else "error"
-                    )
-                    
-                    registered = odoo_service.register_webpay_transaction(
-                        order_id=order["id"],
-                        order_name=order["name"],
-                        amount=amount,
-                        status=tx_status,
-                        payment_data=payment_result,
-                        order_data=order,
-                    )
-
-                    if registered:
-                        print(
-                            f"✅ Transacción Webpay registrada para orden {order['name']} con estado {tx_status}"
-                        )
-                    else:
-                        print(
-                            f"⚠️ No se pudo registrar la transacción Webpay para orden {order['name']}"
-                        )
-                else:
-                    print(f"❌ Error actualizando orden {order['name']} en Odoo")
-            else:
-                print(f"⚠️ No se encontró orden correspondiente en Odoo para {client.client_name}")
+            # TODO: reemplazar por búsqueda directa por name usando order_name enviado desde el frontend.
+            # order = odoo_service.find_order_by_criteria(
+            #     customer_name=customer_name,
+            #     amount=amount,
+            #     order_date=formatted_date
+            # )
+            # 
+            # if order:
+            #     # Actualizar estado de la orden
+            #     success = odoo_service.update_order_payment_status(
+            #         order_id=order["id"],
+            #         payment_data=payment_result
+            #     )
+            #     
+            #     if success:
+            #         print(f"✅ Orden {order['name']} actualizada exitosamente en Odoo")
+            #         
+            #         # 💳 Registrar transacción Webpay en Odoo
+            #         tx_status = (
+            #             "done"
+            #             if payment_result.get("status") == "AUTHORIZED"
+            #             or payment_result.get("response_code") == 0
+            #             else "error"
+            #         )
+            #         
+            #         registered = odoo_service.register_webpay_transaction(
+            #             order_id=order["id"],
+            #             order_name=order["name"],
+            #             amount=amount,
+            #             status=tx_status,
+            #             payment_data=payment_result,
+            #             order_data=order,
+            #         )
+            #
+            #         if registered:
+            #             print(
+            #                 f"✅ Transacción Webpay registrada para orden {order['name']} con estado {tx_status}"
+            #             )
+            #         else:
+            #             print(
+            #                 f"⚠️ No se pudo registrar la transacción Webpay para orden {order['name']}"
+            #             )
+            #     else:
+            #         print(f"❌ Error actualizando orden {order['name']} en Odoo")
+            # else:
+            #     print(f"⚠️ No se encontró orden correspondiente en Odoo para {client.client_name}")
         else:
             print(f"⚠️ Formato de buy_order inválido: {buy_order}")
             
