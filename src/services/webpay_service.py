@@ -78,6 +78,8 @@ class WebpayService:
             self.api_key, 
             self.integration_type
         )
+        print(f"🧩 DEBUG CONFIG → integration_type={self.integration_type} commerce_code={self.commerce_code} api_key_len={len(self.api_key) if self.api_key else 0}")
+
     
     def create_transaction(self, amount: int, customer_name: str = None, order_date: str = None) -> Dict[str, Any]:
         """
@@ -113,6 +115,10 @@ class WebpayService:
             tx = Transaction(self.options)
             response = tx.create(buy_order, session_id, normalized_amount, return_url)
 
+            print(f"📤 Enviando create() → buy_order={buy_order} session_id={session_id} amount={normalized_amount} return_url={return_url}")
+            print(f"📤 DEBUG REQUEST → commerce_code={self.commerce_code} integration_type={self.integration_type} api_key_prefix={self.api_key[:6] if self.api_key else 'NONE'}")
+
+
             # Enriquecer respuesta original para facilitar auditoría
             response.update(
                 {
@@ -129,7 +135,8 @@ class WebpayService:
             return response
             
         except Exception as e:
-            print(f"❌ Error creando transacción: {str(e)}")
+            print(f"🛑 CREATE ERROR DETAIL → type={type(e)} message={str(e)}")
+
             raise e
     
     def commit_transaction(self, token: str) -> Dict[str, Any]:
@@ -155,11 +162,14 @@ class WebpayService:
             print(f"✅ Transacción confirmada - Orden: {buy_order}")
             print(f"🔍 Status: {status}, Response Code: {response_code}")
             print(f"💰 Monto: ${amount}")
+            print(f"📩 Enviando commit() → token={token}")
+            print(f"📩 DEBUG REQUEST → commerce_code={self.commerce_code} integration_type={self.integration_type}")
+
             
             return result
             
         except Exception as e:
-            print(f"❌ Error confirmando transacción: {str(e)}")
+            print(f"🛑 COMMIT ERROR DETAIL → type={type(e)} message={str(e)}")
             raise e
     
     def is_transaction_successful(self, transaction_result: Dict[str, Any]) -> bool:
