@@ -135,27 +135,34 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
                 url=f"{fallback_url}/shop/payment?status=cancelled"
             )
         
-        # Identificar cliente primero (para crear servicio con su configuración)
-        # Por ahora usamos servicio sin cliente para commit, ya que no tenemos el cliente todavía
-        temp_webpay_service = WebpayService()  # Servicio temporal para commit
-        result = temp_webpay_service.commit_transaction(token)
+        # 🔍 1. IDENTIFICAR CLIENTE ANTES DEL COMMIT
+        # Intentar desde referer
+        origin = request.headers.get("referer", "")
+        client = get_client_from_origin(origin) if origin else None
         
-        # Identificar cliente desde el buy_order
-        client = _identify_client_from_result(result)
-        
+        # Si no hay referer, usar el primer cliente activo (fallback)
         if not client:
-            print("⚠️ No se pudo identificar cliente desde transacción")
+            print("⚠️ No se pudo identificar cliente desde referer, usando fallback")
             from src.client_config import client_loader
             active_clients = client_loader.get_active_clients()
             client = active_clients[0] if active_clients else None
         
         if not client:
+            print("❌ No hay clientes activos configurados")
             return RedirectResponse(url="/shop/payment?status=error")
+        
+        print(f"🔍 Cliente identificado para commit: {client.client_name}")
+        
+        # 🔧 2. CREAR WEBPAY SERVICE CON LA CONFIGURACIÓN DEL CLIENTE
+        webpay_service = WebpayService(client)
+        
+        # ✅ 3. HACER COMMIT CON EL SERVICIO CORRECTO
+        result = webpay_service.commit_transaction(token)
         
         odoo_url = client.odoo.url
         
         # Si la transacción es exitosa, intentar actualizar orden en Odoo
-        if temp_webpay_service.is_transaction_successful(result):
+        if webpay_service.is_transaction_successful(result):
             # Crear servicio de Odoo específico para este cliente
             odoo_service = OdooSalesService(client)
             
@@ -207,17 +214,23 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
         
         token = params.get("token_ws")
         
-        # Obtener cliente (intentar desde referer si está disponible)
+        # 🔍 1. IDENTIFICAR CLIENTE ANTES DEL COMMIT
+        # Intentar desde referer
         origin = request.headers.get("referer", "")
         client = get_client_from_origin(origin) if origin else None
         
+        # Si no hay referer, usar el primer cliente activo (fallback)
         if not client:
+            print("⚠️ No se pudo identificar cliente desde referer, usando fallback")
             from src.client_config import client_loader
             active_clients = client_loader.get_active_clients()
             client = active_clients[0] if active_clients else None
         
         if not client:
+            print("❌ No hay clientes activos configurados")
             return RedirectResponse(url="/shop/payment?status=error")
+        
+        print(f"🔍 Cliente identificado para commit: {client.client_name}")
         
         odoo_url = client.odoo.url
         
@@ -234,19 +247,14 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
                     url=f"{odoo_url}/shop/payment?status=error"
                 )
         
-        # Procesar transacción con token_ws
-        # Crear servicio temporal de Webpay para commit (sin cliente específico aún)
-        temp_webpay_service = WebpayService()
-        result = temp_webpay_service.commit_transaction(token)
+        # 🔧 2. CREAR WEBPAY SERVICE CON LA CONFIGURACIÓN DEL CLIENTE
+        webpay_service = WebpayService(client)
         
-        # Identificar cliente desde el resultado
-        client_from_result = _identify_client_from_result(result)
-        if client_from_result:
-            client = client_from_result
-            odoo_url = client.odoo.url
+        # ✅ 3. HACER COMMIT CON EL SERVICIO CORRECTO
+        result = webpay_service.commit_transaction(token)
         
         # Si la transacción es exitosa, intentar actualizar orden en Odoo
-        if temp_webpay_service.is_transaction_successful(result):
+        if webpay_service.is_transaction_successful(result):
             # Crear servicio de Odoo específico para este cliente
             odoo_service = OdooSalesService(client)
             
