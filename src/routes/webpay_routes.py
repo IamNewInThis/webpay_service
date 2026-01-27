@@ -15,17 +15,72 @@ Maneja inicialización, confirmación y cancelación de transacciones.
    3. Actualiza Odoo vía JSON-RPC con credenciales seguras
 """
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from src.services.webpay_service import WebpayService
 from src.services.odoo_sales import OdooSalesService
+from src.services.mongo_logger import mongo_logger
 from src.security import verify_api_key, verify_frontend_request
 from src.client_config import ClientConfig, get_client_from_origin
 from src.config import settings
 from typing import Dict, Any, Optional
 from datetime import datetime
 import os
+import re
 from dotenv import load_dotenv
+
+
+def validate_order_name(order_name: str) -> tuple[bool, str]:
+    """
+    🔒 Valida que el nombre de la orden sea válido de Odoo y no un fallback temporal.
+
+    Rechaza:
+    - ORDER-{timestamp} (fallback del frontend cuando no encuentra el nombre real)
+    - Nombres vacíos o None
+    - Nombres que no parezcan órdenes válidas de Odoo
+
+    Acepta:
+    - SO00123, S00123 (Sale Orders)
+    - PO00123 (Purchase Orders)
+    - WH/OUT/00123 (Stock moves)
+    - Otros formatos comunes de Odoo
+
+    Returns:
+        tuple: (es_valido: bool, mensaje_error: str)
+    """
+    if not order_name or not order_name.strip():
+        return False, "El nombre de la orden está vacío"
+
+    order_name = order_name.strip()
+
+    # ❌ Rechazar patrón de fallback: ORDER-{timestamp}
+    # Este patrón indica que el frontend no pudo obtener el nombre real de la orden
+    if re.match(r'^ORDER-\d+$', order_name):
+        return False, f"Nombre de orden inválido '{order_name}'. El frontend no pudo obtener el nombre real de la orden de Odoo."
+
+    # ❌ Rechazar otros patrones de fallback comunes
+    if order_name.startswith('ORDER-') or order_name.startswith('TEMP-') or order_name.startswith('TEST-'):
+        return False, f"Nombre de orden temporal detectado: '{order_name}'. Debe ser una orden real de Odoo."
+
+    # ✅ Validar que parezca una orden válida de Odoo
+    # Patrones comunes: SO00123, S00123, PO00123, WH/OUT/00123, INV/2024/00001
+    valid_patterns = [
+        r'^S\d+$',           # S00123
+        r'^SO\d+$',          # SO00123
+        r'^PO\d+$',          # PO00123
+        r'^WH/.+/\d+$',      # WH/OUT/00123
+        r'^INV/.+/\d+$',     # INV/2024/00001
+        r'^[A-Z]{2,4}\d+$',  # Otros códigos alfanuméricos
+    ]
+
+    for pattern in valid_patterns:
+        if re.match(pattern, order_name, re.IGNORECASE):
+            return True, ""
+
+    # Si no coincide con ningún patrón conocido pero tampoco es un fallback,
+    # lo aceptamos pero con una advertencia
+    print(f"⚠️ Nombre de orden con formato no estándar: '{order_name}' - se acepta pero verificar")
+    return True, ""
 
 load_dotenv()
 
@@ -87,10 +142,60 @@ async def init_webpay_transaction(
         customer_name = data.get("customer_name", "Cliente")
         order_date = data.get("order_date")
         order_name = data.get("order_name")
-        
+
+        # 🔒 VALIDACIÓN 1: Verificar que el order_name tenga formato válido
+        is_valid, error_message = validate_order_name(order_name)
+        if not is_valid:
+            print(f"❌ VALIDACIÓN FORMATO FALLIDA: {error_message}")
+            return {
+                "error": "Nombre de orden inválido",
+                "message": error_message,
+                "code": "INVALID_ORDER_NAME",
+                "received_order_name": order_name
+            }
+
+        # 🔒 VALIDACIÓN 2 (CRÍTICA): Verificar que la orden EXISTA en Odoo
+        # Esta es la validación más importante - previene fraudes y manipulación del frontend
+        print(f"🔎 Verificando que la orden '{order_name}' exista en Odoo...")
+        odoo_order = odoo_service.get_order_by_name(order_name)
+
+        if not odoo_order:
+            error_msg = f"La orden '{order_name}' no existe en Odoo. No se puede procesar el pago."
+            print(f"❌ VALIDACIÓN ODOO FALLIDA: {error_msg}")
+            mongo_logger.log_error(
+                event_type="INIT_ORDER_NOT_FOUND",
+                client_id=client.client_id,
+                error_message=error_msg,
+                extra_data={"order_name": order_name, "amount": amount}
+            )
+            return {
+                "error": "Orden no encontrada",
+                "message": error_msg,
+                "code": "ORDER_NOT_FOUND_IN_ODOO",
+                "received_order_name": order_name
+            }
+
+        # Verificar que el monto coincida (tolerancia de 1 peso por redondeo)
+        odoo_amount = int(odoo_order.get("amount_total", 0))
+        if abs(odoo_amount - amount) > 1:
+            error_msg = f"El monto no coincide. Frontend: ${amount}, Odoo: ${odoo_amount}"
+            print(f"⚠️ VALIDACIÓN MONTO: {error_msg}")
+            # No bloqueamos, pero registramos la discrepancia
+            mongo_logger.log_error(
+                event_type="INIT_AMOUNT_MISMATCH",
+                client_id=client.client_id,
+                error_message=error_msg,
+                extra_data={"order_name": order_name, "frontend_amount": amount, "odoo_amount": odoo_amount}
+            )
+            # Usar el monto de Odoo como fuente de verdad
+            amount = odoo_amount
+
+        print(f"✅ Orden verificada en Odoo: {odoo_order['name']} (ID: {odoo_order['id']}, Monto: ${odoo_amount})")
+
         print(f"💳 Iniciando transacción para cliente: {client.client_name}")
-        print(f"   Cliente final: {customer_name}, Monto: ${amount}")
-        
+        print(f"   Cliente final: {customer_name[:20]}..., Monto: ${amount}")
+        print(f"   Orden: {order_name} ✅ (verificada en Odoo)")
+
         # Crear transacción usando el servicio
         response = webpay_service.create_transaction(
             amount=amount,
@@ -98,11 +203,28 @@ async def init_webpay_transaction(
             order_date=order_date,
             order_name=order_name
         )
-        
+
+        # 📊 Registrar transacción en MongoDB
+        if response.get("token"):
+            mongo_logger.log_transaction_created(
+                buy_order=response.get("buy_order", order_name),
+                token_ws=response.get("token"),
+                client_id=client.client_id,
+                order_name=order_name,
+                amount=amount
+            )
+
         return response
-        
+
     except Exception as e:
         print(f"❌ Error en /webpay/init: {str(e)}")
+        # Registrar error en MongoDB
+        mongo_logger.log_error(
+            event_type="INIT",
+            client_id=client.client_id if client else "unknown",
+            error_message=str(e),
+            extra_data={"order_name": order_name if 'order_name' in dir() else None}
+        )
         return {"error": "Error interno del servidor", "message": str(e)}
 
 
@@ -165,23 +287,36 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
         if webpay_service.is_transaction_successful(result):
             # Crear servicio de Odoo específico para este cliente
             odoo_service = OdooSalesService(client)
-            
+
             # Intentar encontrar y actualizar la orden correspondiente en Odoo
-            await _process_successful_payment(result, odoo_service, client)
-            
+            await _process_successful_payment(result, odoo_service, client, token_ws=token)
+
             redirect_url = (
                 f"{odoo_url}/shop/confirmation"
                 f"?status=success&order={result['buy_order']}"
             )
             print(f"✅ POST - Redirigiendo a confirmación: {result['buy_order']}")
         else:
+            # Registrar transacción rechazada en MongoDB
+            mongo_logger.log_transaction_commit(
+                token_ws=token,
+                transbank_response=result,
+                client_id=client.client_id,
+                odoo_synced=False,
+                error="Transacción rechazada por Webpay"
+            )
             redirect_url = f"{odoo_url}/shop/payment?status=rejected"
             print("❌ POST - Transacción rechazada")
-        
+
         return RedirectResponse(url=redirect_url)
-        
+
     except Exception as e:
         print(f"❌ Error en POST /webpay/commit: {str(e)}")
+        mongo_logger.log_error(
+            event_type="COMMIT_POST",
+            client_id=client.client_id if client else "unknown",
+            error_message=str(e)
+        )
         # Intentar obtener un cliente para redirección
         from src.client_config import client_loader
         active_clients = client_loader.get_active_clients()
@@ -257,23 +392,36 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
         if webpay_service.is_transaction_successful(result):
             # Crear servicio de Odoo específico para este cliente
             odoo_service = OdooSalesService(client)
-            
+
             # Intentar encontrar y actualizar la orden correspondiente en Odoo
-            await _process_successful_payment(result, odoo_service, client)
-            
+            await _process_successful_payment(result, odoo_service, client, token_ws=token)
+
             redirect_url = (
                 f"{odoo_url}/shop/confirmation"
                 f"?status=success&order={result['buy_order']}"
             )
             print(f"✅ GET - Redirigiendo a confirmación: {result['buy_order']}")
         else:
+            # Registrar transacción rechazada en MongoDB
+            mongo_logger.log_transaction_commit(
+                token_ws=token,
+                transbank_response=result,
+                client_id=client.client_id,
+                odoo_synced=False,
+                error="Transacción rechazada por Webpay"
+            )
             redirect_url = f"{odoo_url}/shop/payment?status=rejected"
             print("❌ GET - Transacción rechazada")
-        
+
         return RedirectResponse(url=redirect_url)
-        
+
     except Exception as e:
         print(f"❌ Error en GET /webpay/commit: {str(e)}")
+        mongo_logger.log_error(
+            event_type="COMMIT_GET",
+            client_id=client.client_id if client else "unknown",
+            error_message=str(e)
+        )
         from src.client_config import client_loader
         active_clients = client_loader.get_active_clients()
         fallback_url = active_clients[0].odoo.url if active_clients else "http://localhost:8000"
@@ -321,12 +469,19 @@ def _identify_client_from_result(payment_result: Dict[str, Any]) -> Optional[Cli
 async def _process_successful_payment(
     payment_result: Dict[str, Any],
     odoo_service: OdooSalesService,
-    client: ClientConfig
+    client: ClientConfig,
+    token_ws: Optional[str] = None
 ) -> None:
     """
     🔄 Procesa un pago exitoso e intenta actualizar la orden en Odoo
     usando DIRECTAMENTE el buy_order como name de sale.order.
     """
+    odoo_synced = False
+    odoo_order_id = None
+    odoo_order_name = None
+    odoo_transaction_id = None
+    error_message = None
+
     try:
         # === Datos base de la transacción ===
         buy_order = payment_result.get("buy_order", "") or ""
@@ -344,9 +499,20 @@ async def _process_successful_payment(
         order = odoo_service.get_order_by_name(buy_order)
 
         if not order:
-            print(f"❌ No se encontró en Odoo la orden '{buy_order}'")
+            error_message = f"No se encontró en Odoo la orden '{buy_order}'"
+            print(f"❌ {error_message}")
+            # Registrar en MongoDB aunque no se encontró la orden
+            mongo_logger.log_transaction_commit(
+                token_ws=token_ws or "",
+                transbank_response=payment_result,
+                client_id=client.client_id,
+                odoo_synced=False,
+                error=error_message
+            )
             return
 
+        odoo_order_id = order["id"]
+        odoo_order_name = order["name"]
         print(f"✅ Orden encontrada → ID={order['id']} name={order['name']} state={order['state']}")
 
         # === 2️⃣ Confirmar la orden o forzar estado "sale" ===
@@ -356,7 +522,17 @@ async def _process_successful_payment(
         )
 
         if not success:
-            print(f"❌ No se pudo confirmar la orden {order['name']}")
+            error_message = f"No se pudo confirmar la orden {order['name']}"
+            print(f"❌ {error_message}")
+            mongo_logger.log_transaction_commit(
+                token_ws=token_ws or "",
+                transbank_response=payment_result,
+                client_id=client.client_id,
+                odoo_order_id=odoo_order_id,
+                odoo_order_name=odoo_order_name,
+                odoo_synced=False,
+                error=error_message
+            )
             return
 
         print(f"💚 Orden {order['name']} confirmada correctamente en Odoo")
@@ -380,9 +556,35 @@ async def _process_successful_payment(
         )
 
         if registered:
+            odoo_synced = True
+            odoo_transaction_id = registered if isinstance(registered, int) else None
             print(f"💳 Transacción Webpay registrada exitosamente en Odoo para {order['name']}")
         else:
-            print(f"⚠️ No se pudo registrar la transacción Webpay en Odoo")
+            error_message = "No se pudo registrar la transacción Webpay en Odoo"
+            print(f"⚠️ {error_message}")
+
+        # 📊 Registrar commit en MongoDB
+        mongo_logger.log_transaction_commit(
+            token_ws=token_ws or "",
+            transbank_response=payment_result,
+            client_id=client.client_id,
+            odoo_order_id=odoo_order_id,
+            odoo_order_name=odoo_order_name,
+            odoo_synced=odoo_synced,
+            odoo_transaction_id=odoo_transaction_id,
+            error=error_message
+        )
 
     except Exception as e:
-        print(f"❌ Error procesando pago exitoso: {str(e)}")
+        error_message = str(e)
+        print(f"❌ Error procesando pago exitoso: {error_message}")
+        # Registrar error en MongoDB
+        mongo_logger.log_transaction_commit(
+            token_ws=token_ws or "",
+            transbank_response=payment_result,
+            client_id=client.client_id,
+            odoo_order_id=odoo_order_id,
+            odoo_order_name=odoo_order_name,
+            odoo_synced=False,
+            error=error_message
+        )

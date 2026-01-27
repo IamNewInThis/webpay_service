@@ -38,6 +38,12 @@ class Settings:
     
     # 📊 Configuración de logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+
+    # 🗄️ Configuración de MongoDB (logging persistente)
+    MONGO_URI: str = os.getenv("MONGO_URI", "")
+    MONGO_DATABASE: str = os.getenv("MONGO_DATABASE", "webpay_service")
+    MONGO_COLLECTION: str = os.getenv("MONGO_COLLECTION", "transaction_logs")
+    MONGO_ENABLED: bool = os.getenv("MONGO_ENABLED", "true").lower() == "true"
     
     @classmethod
     def get_cors_config(cls, client: Optional[ClientConfig] = None) -> dict:
