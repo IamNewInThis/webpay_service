@@ -44,6 +44,8 @@ class Settings:
     MONGO_DATABASE: str = os.getenv("MONGO_DATABASE", "webpay_service")
     MONGO_COLLECTION: str = os.getenv("MONGO_COLLECTION", "transaction_logs")
     MONGO_ENABLED: bool = os.getenv("MONGO_ENABLED", "true").lower() == "true"
+    # SSL: false en VPS con cert válido, true en Render/servicios cloud
+    MONGO_TLS_ALLOW_INVALID: bool = os.getenv("MONGO_TLS_ALLOW_INVALID", "true").lower() == "true"
     
     @classmethod
     def get_cors_config(cls, client: Optional[ClientConfig] = None) -> dict:

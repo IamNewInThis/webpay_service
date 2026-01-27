@@ -57,12 +57,18 @@ class MongoLogService:
         try:
             from pymongo import MongoClient, ASCENDING, DESCENDING
             from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+            import ssl
 
             # Conectar con timeout corto para no bloquear el inicio
+            # Configuración SSL adaptable según entorno
             self._client = MongoClient(
                 settings.MONGO_URI,
-                serverSelectionTimeoutMS=5000,
-                connectTimeoutMS=5000
+                serverSelectionTimeoutMS=10000,  # Aumentado a 10s
+                connectTimeoutMS=10000,
+                socketTimeoutMS=10000,
+                tls=True,
+                tlsAllowInvalidCertificates=settings.MONGO_TLS_ALLOW_INVALID,  # Configurable
+                retryWrites=True
             )
 
             # Verificar conexión
