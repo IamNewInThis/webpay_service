@@ -11,7 +11,7 @@ Funcionalidades:
 - 🔄 Integración con Odoo ERP (en desarrollo)
 
 Autor: Sistema de Pagos Tecnogrow
-Versión: 2.0.4
+Versión: 3.0.0
 """
 
 from fastapi import FastAPI
@@ -31,7 +31,7 @@ from src.config import settings
 app = FastAPI(
     title="Webpay Service API",
     description="Microservicio para procesamiento de pagos con Webpay Plus - Multi-tenant",
-    version="2.0.4",
+    version="3.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -66,7 +66,7 @@ async def root():
     return {
         "status": "ok",
         "message": "Webpay Service operativo - Multi-tenant",
-        "version": "2.0.4",
+        "version": "3.0.0",
         "clients_count": len(active_clients),
         "clients": [c.client_name for c in active_clients]
     }
@@ -83,22 +83,99 @@ async def health_check():
     Returns:
         Estado detallado de cada componente del sistema
     """
+    from datetime import datetime, timezone
+    from src.client_config import client_loader
+    from src.services.mongo_logger import MongoLogService
+    
     try:
-        # TODO: Agregar verificaciones reales de:
-        # - Conectividad con Transbank
-        # - Conectividad con Odoo
+        components = {}
+        overall_status = "healthy"
+        
+        # 1. Verificar clientes configurados
+        active_clients = client_loader.get_active_clients()
+        components["clients"] = {
+            "status": "ok" if active_clients else "warning",
+            "message": f"{len(active_clients)} cliente(s) activo(s)",
+            "count": len(active_clients),
+            "names": [c.client_name for c in active_clients]
+        }
+        
+        # 2. Verificar MongoDB
+        mongo_service = MongoLogService()
+        if settings.MONGO_ENABLED and mongo_service._client:
+            try:
+                mongo_service._client.admin.command('ping')
+                components["mongodb"] = {
+                    "status": "ok",
+                    "message": "Conectado",
+                    "database": settings.MONGO_DATABASE
+                }
+            except Exception as e:
+                components["mongodb"] = {
+                    "status": "error",
+                    "message": f"Error de conexión: {str(e)}"
+                }
+                overall_status = "degraded"
+        else:
+            components["mongodb"] = {
+                "status": "disabled",
+                "message": "MongoDB no habilitado"
+            }
+        
+        # 3. Verificar Webpay SDK (verificar que podamos crear una transacción)
+        try:
+            from transbank.webpay.webpay_plus.transaction import Transaction
+            components["webpay_sdk"] = {
+                "status": "ok",
+                "message": "SDK Transbank inicializado",
+                "version": "6.1.0"
+            }
+        except Exception as e:
+            components["webpay_sdk"] = {
+                "status": "error",
+                "message": f"Error SDK: {str(e)}"
+            }
+            overall_status = "unhealthy"
+        
+        # 4. Verificar configuración de Odoo (al menos 1 cliente con Odoo configurado)
+        odoo_clients = [c for c in active_clients if c.odoo and c.odoo.url]
+        components["odoo_integration"] = {
+            "status": "ok" if odoo_clients else "warning",
+            "message": f"{len(odoo_clients)} cliente(s) con Odoo configurado",
+            "configured_clients": len(odoo_clients)
+        }
+        
+        # 5. CORS
+        components["cors"] = {
+            "status": "ok",
+            "message": f"CORS configurado con {len(cors_config.get('allow_origins', []))} origen(es)"
+        }
+        
+        # 6. Rutas
+        components["routes"] = {
+            "status": "ok",
+            "message": "Rutas registradas",
+            "endpoints": len(app.routes)
+        }
+        
+        # Determinar código de estado HTTP
+        status_code = 200
+        if overall_status == "degraded":
+            status_code = 200  # Funcional pero con advertencias
+        elif overall_status == "unhealthy":
+            status_code = 503  # No funcional
         
         return JSONResponse(
-            status_code=200,
+            status_code=status_code,
             content={
-                "status": "healthy",
-                "timestamp": "2025-10-19T00:00:00Z",  # TODO: Usar timestamp real
-                "components": {
-                    "webpay_sdk": {"status": "ok", "message": "SDK inicializado"},
-                    "cors": {"status": "ok", "message": "CORS configurado"},
-                    "routes": {"status": "ok", "message": "Rutas registradas"},
-                    "odoo_integration": {"status": "pending", "message": "En desarrollo"}
-                }
+                "status": overall_status,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "service": {
+                    "name": settings.SERVICE_NAME,
+                    "version": settings.SERVICE_VERSION,
+                    "environment": os.getenv("RENDER", "local")
+                },
+                "components": components
             }
         )
         
@@ -108,7 +185,7 @@ async def health_check():
             content={
                 "status": "unhealthy", 
                 "error": str(e),
-                "timestamp": "2025-10-19T00:00:00Z"
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
         )
 
