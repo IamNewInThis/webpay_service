@@ -58,17 +58,33 @@ class MongoLogService:
             from pymongo import MongoClient, ASCENDING, DESCENDING
             from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
             import ssl
+            import certifi
 
-            # Conectar con timeout corto para no bloquear el inicio
-            # Configuración SSL adaptable según entorno
+            # Solución para SSL en Render - crear contexto SSL sin verificación
+            ssl_context = None
+            tls_params = {
+                'tls': True,
+                'retryWrites': True,
+                'serverSelectionTimeoutMS': 10000,
+                'connectTimeoutMS': 10000,
+                'socketTimeoutMS': 10000,
+            }
+            
+            if settings.MONGO_TLS_ALLOW_INVALID:
+                # Para Render: desactivar completamente verificación SSL
+                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                tls_params['ssl_context'] = ssl_context
+                tls_params['tlsAllowInvalidCertificates'] = True
+            else:
+                # Para VPS/producción: usar certificados válidos
+                tls_params['tlsCAFile'] = certifi.where()
+            
+            # Conectar con configuración SSL optimizada
             self._client = MongoClient(
                 settings.MONGO_URI,
-                serverSelectionTimeoutMS=10000,  # Aumentado a 10s
-                connectTimeoutMS=10000,
-                socketTimeoutMS=10000,
-                tls=True,
-                tlsAllowInvalidCertificates=settings.MONGO_TLS_ALLOW_INVALID,  # Configurable
-                retryWrites=True
+                **tls_params
             )
 
             # Verificar conexión
