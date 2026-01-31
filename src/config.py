@@ -47,6 +47,12 @@ class Settings:
     # SSL: false en VPS con cert válido, true en Render/servicios cloud
     MONGO_TLS_ALLOW_INVALID: bool = os.getenv("MONGO_TLS_ALLOW_INVALID", "true").lower() == "true"
     
+    # 🏥 Configuración de Health Check y Monitoreo
+    HEALTH_CHECK_URL: str = os.getenv("HEALTH_CHECK_URL", f"{SERVICE_BASE_URL}/health")
+    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
+    CHECK_INTERVAL_SECONDS: int = int(os.getenv("CHECK_INTERVAL_SECONDS", "3600"))  # 1 hora por defecto
+    
     @classmethod
     def get_cors_config(cls, client: Optional[ClientConfig] = None) -> dict:
         """

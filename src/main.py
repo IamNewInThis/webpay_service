@@ -180,6 +180,8 @@ async def health_check():
         )
         
     except Exception as e:
+        from datetime import datetime, timezone
+        
         return JSONResponse(
             status_code=503,
             content={

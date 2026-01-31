@@ -338,6 +338,7 @@ Clave: 123
 
 - [x] **Configuración multi-tenant** - Múltiples clientes en un servidor
 - [x] **Identificación automática de cliente** - Por dominio de origen
+- [x] **Health check con alertas automáticas** - Monitoreo vía Telegram
 - [ ] Manejo de múltiples proveedores de pago por cliente
 - [ ] Dashboard de monitoreo de transacciones
 - [ ] Notificaciones automáticas por email
@@ -345,6 +346,34 @@ Clave: 123
 - [ ] Tests automatizados completos
 - [ ] Métricas y logging avanzado
 - [ ] Hot-reload de configuración sin reiniciar
+
+## 🏥 Health Check y Monitoreo
+
+El servicio incluye un sistema de monitoreo automático con alertas vía Telegram que verifica el estado cada hora.
+
+### Características
+- ✅ Endpoint `/health` con estado detallado del servicio
+- ✅ Monitoreo automático cada hora (configurable)
+- ✅ Alertas vía Telegram solo cuando el servicio está caído
+- ✅ Notificación cuando el servicio se recupera
+- ✅ Compatible con chats personales y grupos
+- ✅ Completamente gratuito
+
+### Configuración rápida
+
+1. **Crear bot de Telegram** con [@BotFather](https://t.me/botfather)
+2. **Agregar variables al .env**:
+```bash
+HEALTH_CHECK_URL=http://localhost:8000/health
+TELEGRAM_BOT_TOKEN=tu_token_aqui
+TELEGRAM_CHAT_ID=tu_chat_id_aqui
+```
+3. **Ejecutar el monitor**:
+```bash
+python -m monitoring.health_check
+```
+
+📖 **[Documentación completa de monitoreo](monitoring/README.md)**
 
 ## 📚 Documentación adicional
 
