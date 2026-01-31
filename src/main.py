@@ -11,7 +11,7 @@ Funcionalidades:
 - 🔄 Integración con Odoo ERP (en desarrollo)
 
 Autor: Sistema de Pagos Tecnogrow
-Versión: 3.0.0
+Versión: 3.0.1
 """
 
 from fastapi import FastAPI
@@ -31,7 +31,7 @@ from src.config import settings
 app = FastAPI(
     title="Webpay Service API",
     description="Microservicio para procesamiento de pagos con Webpay Plus - Multi-tenant",
-    version="3.0.0",
+    version="3.0.1",
     docs_url="/docs",
     redoc_url="/redoc"
 )
