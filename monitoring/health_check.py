@@ -114,41 +114,52 @@ class HealthChecker:
     
     def check_health(self) -> tuple[bool, Optional[str]]:
         """
-        Verifica el estado del servicio
-        
+        Verifica el estado del servicio con reintentos antes de reportar fallo.
+        Intenta hasta 3 veces con 20s de espera entre intentos.
+
         Returns:
             Tupla (is_healthy: bool, details: Optional[str])
         """
-        try:
-            logger.info(f"🔍 Verificando estado del servicio: {self.health_url}")
-            
-            response = requests.get(self.health_url, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                status = data.get("status", "unknown")
-                
-                if status == "healthy":
-                    logger.info("✅ Servicio operativo")
-                    return True, None
+        max_retries = 3
+        retry_delay = 20  # segundos entre reintentos
+        last_error = "Error desconocido"
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(f"🔍 Verificando estado del servicio (intento {attempt}/{max_retries}): {self.health_url}")
+
+                response = requests.get(self.health_url, timeout=30)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    status = data.get("status", "unknown")
+
+                    if status == "healthy":
+                        logger.info("✅ Servicio operativo")
+                        return True, None
+                    else:
+                        last_error = data.get("error", "Estado no saludable")
+                        logger.warning(f"⚠️ Servicio respondió pero no está saludable: {last_error}")
                 else:
-                    error_msg = data.get("error", "Estado no saludable")
-                    logger.warning(f"⚠️ Servicio respondió pero no está saludable: {error_msg}")
-                    return False, error_msg
-            else:
-                error_msg = f"HTTP {response.status_code}"
-                logger.error(f"❌ Servicio retornó error: {error_msg}")
-                return False, error_msg
-                
-        except requests.exceptions.Timeout:
-            logger.error("❌ Timeout al conectar con el servicio")
-            return False, "Timeout de conexión"
-        except requests.exceptions.ConnectionError:
-            logger.error("❌ No se pudo conectar con el servicio")
-            return False, "No se pudo conectar al servicio"
-        except Exception as e:
-            logger.error(f"❌ Error inesperado: {e}")
-            return False, str(e)
+                    last_error = f"HTTP {response.status_code}"
+                    logger.error(f"❌ Servicio retornó error: {last_error}")
+
+            except requests.exceptions.Timeout:
+                last_error = "Timeout de conexión"
+                logger.error(f"❌ Timeout al conectar con el servicio (intento {attempt}/{max_retries})")
+            except requests.exceptions.ConnectionError:
+                last_error = "No se pudo conectar al servicio"
+                logger.error(f"❌ No se pudo conectar con el servicio (intento {attempt}/{max_retries})")
+            except Exception as e:
+                last_error = str(e)
+                logger.error(f"❌ Error inesperado (intento {attempt}/{max_retries}): {e}")
+
+            if attempt < max_retries:
+                logger.info(f"⏳ Reintentando en {retry_delay}s...")
+                time.sleep(retry_delay)
+
+        logger.error(f"❌ Servicio no disponible tras {max_retries} intentos: {last_error}")
+        return False, last_error
     
     def format_alert_message(self, is_down: bool, details: Optional[str] = None) -> str:
         """
