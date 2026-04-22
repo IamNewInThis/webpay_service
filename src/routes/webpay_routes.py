@@ -22,7 +22,7 @@ from src.services.odoo_sales import OdooSalesService
 from src.services.odoo_invoices import OdooInvoicesService
 from src.services.mongo_logger import mongo_logger
 from src.security import verify_api_key, verify_frontend_request
-from src.client_config import ClientConfig, get_client_from_origin
+from src.client_config import ClientConfig, get_client_from_origin, get_client_from_id
 from src.config import settings
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -240,6 +240,23 @@ def _get_doc_type_from_log(token_ws: str) -> str:
     return "venta"
 
 
+def _get_client_from_session(session_id: str) -> Optional[ClientConfig]:
+    """
+    Extrae el client_id codificado en session_id y devuelve su ClientConfig.
+    Formato esperado: "F:{client_id}:{id1}|{id2}"
+    """
+    try:
+        if not session_id.startswith("F:"):
+            return None
+        rest = session_id[2:]          # "{client_id}:{id1}|{id2}"
+        client_id = rest.split(":")[0]
+        if client_id:
+            return get_client_from_id(client_id)
+    except Exception:
+        pass
+    return None
+
+
 @webpay_router.post("/init-factura")
 async def init_factura_transaction(
     request: Request,
@@ -315,9 +332,9 @@ async def init_factura_transaction(
         # buy_order: nombre de la primera factura (Webpay acepta hasta 26 chars)
         primary_name = invoices[0].get("name", f"FAC-{invoice_ids[0]}")
 
-        # Codificar invoice_ids en session_id para recuperarlos en el commit
-        # sin depender de MongoDB. Formato: "F:123|456|789" (máx 61 chars de Transbank)
-        encoded_session = "F:" + "|".join(str(i) for i in invoice_ids)
+        # Codificar client_id + invoice_ids en session_id para recuperarlos en el commit
+        # sin depender de MongoDB ni del referer. Formato: "F:{client_id}:{id1}|{id2}"
+        encoded_session = f"F:{client.client_id}:" + "|".join(str(i) for i in invoice_ids)
         if len(encoded_session) > 61:
             return {
                 "error": "Demasiadas facturas seleccionadas. Paga en grupos más pequeños.",
@@ -415,16 +432,20 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
         result = webpay_service.commit_transaction(token)
 
         odoo_url = client.odoo.url
-        doc_type = "factura" if str(result.get("session_id", "")).startswith("F:") else "venta"
+        session_str = str(result.get("session_id", ""))
+        doc_type = "factura" if session_str.startswith("F:") else "venta"
 
         if webpay_service.is_transaction_successful(result):
             if doc_type == "factura":
-                await _process_successful_invoice_payment(result, client, token)
+                # Recuperar el cliente original desde session_id (ignora el fallback del referer)
+                factura_client = _get_client_from_session(session_str) or client
+                odoo_url = factura_client.odoo.url
+                await _process_successful_invoice_payment(result, factura_client, token)
                 redirect_url = (
                     f"{odoo_url}/pago-express"
                     f"?status=exitoso&ref={result.get('buy_order', '')}"
                 )
-                print(f"✅ POST - Pago de factura confirmado: {result.get('buy_order')}")
+                print(f"✅ POST - Pago de factura confirmado: {result.get('buy_order')} (cliente: {factura_client.client_id})")
             else:
                 odoo_service = OdooSalesService(client)
                 await _process_successful_payment(result, odoo_service, client, token_ws=token)
@@ -526,16 +547,20 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
         # ✅ 3. HACER COMMIT CON EL SERVICIO CORRECTO
         result = webpay_service.commit_transaction(token)
 
-        doc_type = "factura" if str(result.get("session_id", "")).startswith("F:") else "venta"
+        session_str = str(result.get("session_id", ""))
+        doc_type = "factura" if session_str.startswith("F:") else "venta"
 
         if webpay_service.is_transaction_successful(result):
             if doc_type == "factura":
-                await _process_successful_invoice_payment(result, client, token)
+                # Recuperar el cliente original desde session_id (ignora el fallback del referer)
+                factura_client = _get_client_from_session(session_str) or client
+                odoo_url = factura_client.odoo.url
+                await _process_successful_invoice_payment(result, factura_client, token)
                 redirect_url = (
                     f"{odoo_url}/pago-express"
                     f"?status=exitoso&ref={result.get('buy_order', '')}"
                 )
-                print(f"✅ GET - Pago de factura confirmado: {result.get('buy_order')}")
+                print(f"✅ GET - Pago de factura confirmado: {result.get('buy_order')} (cliente: {factura_client.client_id})")
             else:
                 odoo_service = OdooSalesService(client)
                 await _process_successful_payment(result, odoo_service, client, token_ws=token)
@@ -589,11 +614,14 @@ async def _process_successful_invoice_payment(
 
     try:
         # Recuperar invoice_ids desde session_id de Webpay (fuente primaria, no depende de MongoDB)
+        # Formato: "F:{client_id}:{id1}|{id2}"
         invoice_ids: List[int] = []
-        session_id = payment_result.get("session_id", "")
-        if isinstance(session_id, str) and session_id.startswith("F:"):
+        session_id = str(payment_result.get("session_id", ""))
+        if session_id.startswith("F:"):
             try:
-                invoice_ids = [int(x) for x in session_id[2:].split("|") if x.isdigit()]
+                rest = session_id[2:]                        # "{client_id}:{id1}|{id2}"
+                ids_part = rest.split(":", 1)[1] if ":" in rest else rest
+                invoice_ids = [int(x) for x in ids_part.split("|") if x.isdigit()]
             except Exception:
                 pass
 
