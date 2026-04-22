@@ -87,6 +87,7 @@ class WebpayService:
         customer_name: str = None,
         order_date: str = None,
         order_name: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         💳 Crea una nueva transacción en Webpay
@@ -120,7 +121,8 @@ class WebpayService:
 
             if order_name and buy_order == str(order_name).strip():
                 print(f"🔸 buy_order fijado desde order_name: {buy_order}")
-            session_id = f"S-{abs(hash((buy_order, normalized_amount))) % 1000000}"
+            if session_id is None:
+                session_id = f"S-{abs(hash((buy_order, normalized_amount))) % 1000000}"
 
             # Generar identificadores únicos para la transacción
             # URL de retorno donde Webpay enviará la respuesta

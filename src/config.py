@@ -19,7 +19,7 @@ class Settings:
     
     # 🚀 Configuración del servidor
     SERVICE_NAME: str = "Webpay Service"
-    SERVICE_VERSION: str = "2.0.0"
+    SERVICE_VERSION: str = "3.1.0"
     
     # 🌍 URL del servicio (para return_url de Webpay)
     SERVICE_BASE_URL: str = os.getenv(

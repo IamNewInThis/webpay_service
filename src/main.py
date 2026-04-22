@@ -66,7 +66,7 @@ async def root():
     return {
         "status": "ok",
         "message": "Webpay Service operativo - Multi-tenant",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "clients_count": len(active_clients),
         "clients": [c.client_name for c in active_clients]
     }

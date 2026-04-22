@@ -36,6 +36,7 @@ class WebpayConfig:
     integration_type: str = "TEST"  # TEST, CERTIFICATION, PRODUCTION
     commerce_code: Optional[str] = None  # Requerido para CERTIFICATION/PRODUCTION
     api_key: Optional[str] = None  # Requerido para CERTIFICATION/PRODUCTION
+    invoice_journal_id: Optional[int] = None  # Journal para pagos de facturas (pago express)
     
     def __post_init__(self):
         """Valida que commerce_code y api_key estén presentes si no es TEST"""

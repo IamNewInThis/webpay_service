@@ -201,7 +201,8 @@ class MongoLogService:
         token_ws: str,
         client_id: str,
         order_name: str,
-        amount: int
+        amount: int,
+        extra_data: Optional[Dict[str, Any]] = None
     ) -> Optional[str]:
         """
         📝 Registra que la transacción fue creada en Webpay
@@ -224,6 +225,9 @@ class MongoLogService:
                 "created_at": datetime.now(timezone.utc),
                 "updated_at": datetime.now(timezone.utc),
             }
+
+            if extra_data:
+                doc["extra_data"] = extra_data
 
             result = self._collection.insert_one(doc)
             print(f"📝 Log CREATED registrado: {buy_order} token={token_ws[:20]}...")

@@ -19,11 +19,12 @@ from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from src.services.webpay_service import WebpayService
 from src.services.odoo_sales import OdooSalesService
+from src.services.odoo_invoices import OdooInvoicesService
 from src.services.mongo_logger import mongo_logger
 from src.security import verify_api_key, verify_frontend_request
 from src.client_config import ClientConfig, get_client_from_origin
 from src.config import settings
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 import os
 import re
@@ -228,6 +229,138 @@ async def init_webpay_transaction(
         return {"error": "Error interno del servidor", "message": str(e)}
 
 
+def _get_doc_type_from_log(token_ws: str) -> str:
+    """Consulta MongoDB para saber si el token corresponde a una factura o venta."""
+    try:
+        log = mongo_logger.get_transaction_by_token(token_ws)
+        if log and isinstance(log.get("extra_data"), dict):
+            return log["extra_data"].get("doc_type", "venta")
+    except Exception:
+        pass
+    return "venta"
+
+
+@webpay_router.post("/init-factura")
+async def init_factura_transaction(
+    request: Request,
+    validation: Dict[str, Any] = Depends(verify_frontend_request),
+) -> Dict[str, Any]:
+    """
+    Inicializa una transacción Webpay para pago de facturas (Pago Express).
+
+    Body esperado:
+    {
+        "invoice_ids": [123, 456],
+        "amount": 50000,
+        "customer_name": "Juan Pérez",
+        "rut": "12.345.678-9"
+    }
+
+    Returns:
+        {"token": "...", "url": "..."}
+    """
+    client: Optional[ClientConfig] = None
+    try:
+        client = validation.get("client")
+        if not client:
+            return {"error": "Cliente no identificado"}
+
+        data = await request.json()
+        invoice_ids: List[int] = data.get("invoice_ids", [])
+        amount = int(data.get("amount", 0))
+        customer_name = str(data.get("customer_name", "Cliente"))
+        rut = str(data.get("rut", ""))
+
+        if not invoice_ids or amount <= 0:
+            return {"error": "Se requieren invoice_ids y amount válidos"}
+
+        # Validar facturas en Odoo
+        invoices_service = OdooInvoicesService(client)
+        if not invoices_service.authenticate():
+            return {"error": "No se pudo conectar con Odoo"}
+
+        invoices = invoices_service.get_invoices_by_ids(invoice_ids)
+        if not invoices:
+            return {
+                "error": "No se encontraron las facturas en Odoo",
+                "code": "INVOICES_NOT_FOUND",
+            }
+
+        # Verificar que todas las facturas estén publicadas y pendientes de pago
+        invalid = [
+            inv for inv in invoices
+            if inv.get("state") != "posted"
+            or inv.get("payment_state") not in ("not_paid", "partial")
+        ]
+        if invalid:
+            invalid_names = [inv.get("name", inv["id"]) for inv in invalid]
+            return {
+                "error": "Algunas facturas no están disponibles para pago",
+                "code": "INVALID_INVOICE_STATE",
+                "facturas": invalid_names,
+            }
+
+        # Usar monto real de Odoo como fuente de verdad
+        total_residual = round(sum(inv.get("amount_residual", 0) for inv in invoices))
+        if abs(total_residual - amount) > 1:
+            print(f"⚠️ Monto frontend ${amount} vs Odoo ${total_residual} — usando Odoo")
+            mongo_logger.log_error(
+                event_type="INIT_FACTURA_AMOUNT_MISMATCH",
+                client_id=client.client_id,
+                error_message=f"Frontend: ${amount}, Odoo: ${total_residual}",
+                extra_data={"invoice_ids": invoice_ids},
+            )
+            amount = total_residual
+
+        # buy_order: nombre de la primera factura (Webpay acepta hasta 26 chars)
+        primary_name = invoices[0].get("name", f"FAC-{invoice_ids[0]}")
+
+        # Codificar invoice_ids en session_id para recuperarlos en el commit
+        # sin depender de MongoDB. Formato: "F:123|456|789" (máx 61 chars de Transbank)
+        encoded_session = "F:" + "|".join(str(i) for i in invoice_ids)
+        if len(encoded_session) > 61:
+            return {
+                "error": "Demasiadas facturas seleccionadas. Paga en grupos más pequeños.",
+                "code": "TOO_MANY_INVOICES",
+            }
+
+        print(f"🧾 Iniciando pago express para {len(invoices)} factura(s) — ${amount} — {primary_name}")
+
+        webpay_service = WebpayService(client)
+        response = webpay_service.create_transaction(
+            amount=amount,
+            customer_name=customer_name,
+            order_date=None,
+            order_name=primary_name,
+            session_id=encoded_session,
+        )
+
+        if response.get("token"):
+            mongo_logger.log_transaction_created(
+                buy_order=response.get("buy_order", primary_name),
+                token_ws=response["token"],
+                client_id=client.client_id,
+                order_name=primary_name,
+                amount=amount,
+                extra_data={
+                    "doc_type": "factura",
+                    "invoice_ids": invoice_ids,
+                    "rut": rut,
+                },
+            )
+
+        return response
+
+    except Exception as e:
+        print(f"❌ Error en /webpay/init-factura: {e}")
+        mongo_logger.log_error(
+            event_type="INIT_FACTURA",
+            client_id=client.client_id if client else "unknown",
+            error_message=str(e),
+        )
+        return {"error": "Error interno del servidor", "message": str(e)}
+
+
 @webpay_router.post("/commit")
 async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
     """
@@ -280,24 +413,27 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
         
         # ✅ 3. HACER COMMIT CON EL SERVICIO CORRECTO
         result = webpay_service.commit_transaction(token)
-        
+
         odoo_url = client.odoo.url
-        
-        # Si la transacción es exitosa, intentar actualizar orden en Odoo
+        doc_type = "factura" if str(result.get("session_id", "")).startswith("F:") else "venta"
+
         if webpay_service.is_transaction_successful(result):
-            # Crear servicio de Odoo específico para este cliente
-            odoo_service = OdooSalesService(client)
-
-            # Intentar encontrar y actualizar la orden correspondiente en Odoo
-            await _process_successful_payment(result, odoo_service, client, token_ws=token)
-
-            redirect_url = (
-                f"{odoo_url}/shop/confirmation"
-                f"?status=success&order={result['buy_order']}"
-            )
-            print(f"✅ POST - Redirigiendo a confirmación: {result['buy_order']}")
+            if doc_type == "factura":
+                await _process_successful_invoice_payment(result, client, token)
+                redirect_url = (
+                    f"{odoo_url}/pago-express"
+                    f"?status=exitoso&ref={result.get('buy_order', '')}"
+                )
+                print(f"✅ POST - Pago de factura confirmado: {result.get('buy_order')}")
+            else:
+                odoo_service = OdooSalesService(client)
+                await _process_successful_payment(result, odoo_service, client, token_ws=token)
+                redirect_url = (
+                    f"{odoo_url}/shop/confirmation"
+                    f"?status=success&order={result['buy_order']}"
+                )
+                print(f"✅ POST - Redirigiendo a confirmación: {result['buy_order']}")
         else:
-            # Registrar transacción rechazada en MongoDB
             mongo_logger.log_transaction_commit(
                 token_ws=token,
                 transbank_response=result,
@@ -305,8 +441,11 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
                 odoo_synced=False,
                 error="Transacción rechazada por Webpay"
             )
-            redirect_url = f"{odoo_url}/shop/payment?status=rejected"
-            print("❌ POST - Transacción rechazada")
+            if doc_type == "factura":
+                redirect_url = f"{odoo_url}/pago-express?status=rechazado"
+            else:
+                redirect_url = f"{odoo_url}/shop/payment?status=rejected"
+            print(f"❌ POST - Transacción rechazada (doc_type={doc_type})")
 
         return RedirectResponse(url=redirect_url)
 
@@ -317,7 +456,6 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
             client_id=client.client_id if client else "unknown",
             error_message=str(e)
         )
-        # Intentar obtener un cliente para redirección
         from src.client_config import client_loader
         active_clients = client_loader.get_active_clients()
         fallback_url = active_clients[0].odoo.url if active_clients else "http://localhost:8000"
@@ -387,22 +525,26 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
         
         # ✅ 3. HACER COMMIT CON EL SERVICIO CORRECTO
         result = webpay_service.commit_transaction(token)
-        
-        # Si la transacción es exitosa, intentar actualizar orden en Odoo
+
+        doc_type = "factura" if str(result.get("session_id", "")).startswith("F:") else "venta"
+
         if webpay_service.is_transaction_successful(result):
-            # Crear servicio de Odoo específico para este cliente
-            odoo_service = OdooSalesService(client)
-
-            # Intentar encontrar y actualizar la orden correspondiente en Odoo
-            await _process_successful_payment(result, odoo_service, client, token_ws=token)
-
-            redirect_url = (
-                f"{odoo_url}/shop/confirmation"
-                f"?status=success&order={result['buy_order']}"
-            )
-            print(f"✅ GET - Redirigiendo a confirmación: {result['buy_order']}")
+            if doc_type == "factura":
+                await _process_successful_invoice_payment(result, client, token)
+                redirect_url = (
+                    f"{odoo_url}/pago-express"
+                    f"?status=exitoso&ref={result.get('buy_order', '')}"
+                )
+                print(f"✅ GET - Pago de factura confirmado: {result.get('buy_order')}")
+            else:
+                odoo_service = OdooSalesService(client)
+                await _process_successful_payment(result, odoo_service, client, token_ws=token)
+                redirect_url = (
+                    f"{odoo_url}/shop/confirmation"
+                    f"?status=success&order={result['buy_order']}"
+                )
+                print(f"✅ GET - Redirigiendo a confirmación: {result['buy_order']}")
         else:
-            # Registrar transacción rechazada en MongoDB
             mongo_logger.log_transaction_commit(
                 token_ws=token,
                 transbank_response=result,
@@ -410,8 +552,11 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
                 odoo_synced=False,
                 error="Transacción rechazada por Webpay"
             )
-            redirect_url = f"{odoo_url}/shop/payment?status=rejected"
-            print("❌ GET - Transacción rechazada")
+            if doc_type == "factura":
+                redirect_url = f"{odoo_url}/pago-express?status=rechazado"
+            else:
+                redirect_url = f"{odoo_url}/shop/payment?status=rejected"
+            print(f"❌ GET - Transacción rechazada (doc_type={doc_type})")
 
         return RedirectResponse(url=redirect_url)
 
@@ -427,6 +572,83 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
         fallback_url = active_clients[0].odoo.url if active_clients else "http://localhost:8000"
         return RedirectResponse(
             url=f"{fallback_url}/shop/payment?status=error"
+        )
+
+
+async def _process_successful_invoice_payment(
+    payment_result: Dict[str, Any],
+    client: ClientConfig,
+    token_ws: Optional[str] = None,
+) -> None:
+    """
+    Procesa un pago exitoso de facturas (Pago Express).
+    Registra el pago en Odoo via account.payment.register y reconcilia las facturas.
+    """
+    odoo_synced = False
+    error_message = None
+
+    try:
+        # Recuperar invoice_ids desde session_id de Webpay (fuente primaria, no depende de MongoDB)
+        invoice_ids: List[int] = []
+        session_id = payment_result.get("session_id", "")
+        if isinstance(session_id, str) and session_id.startswith("F:"):
+            try:
+                invoice_ids = [int(x) for x in session_id[2:].split("|") if x.isdigit()]
+            except Exception:
+                pass
+
+        # Fallback: intentar desde MongoDB si session_id no trajo IDs
+        if not invoice_ids and token_ws:
+            mongo_log = mongo_logger.get_transaction_by_token(token_ws)
+            if mongo_log and isinstance(mongo_log.get("extra_data"), dict):
+                invoice_ids = mongo_log["extra_data"].get("invoice_ids", [])
+                if invoice_ids:
+                    print("⚠️ invoice_ids recuperados desde MongoDB (fallback)")
+
+        if not invoice_ids:
+            error_message = "No se pudieron recuperar los invoice_ids (session_id inválido y MongoDB sin datos)"
+            print(f"❌ {error_message}")
+            mongo_logger.log_transaction_commit(
+                token_ws=token_ws or "",
+                transbank_response=payment_result,
+                client_id=client.client_id,
+                odoo_synced=False,
+                error=error_message,
+            )
+            return
+
+        amount = payment_result.get("amount", 0)
+        buy_order = payment_result.get("buy_order", "")
+        print(f"🧾 Registrando pago en facturas {invoice_ids} — ${amount} — {buy_order}")
+
+        invoices_service = OdooInvoicesService(client)
+        odoo_synced = invoices_service.register_invoice_payment(
+            invoice_ids=invoice_ids,
+            amount=float(amount),
+            payment_data=payment_result,
+        )
+
+        if not odoo_synced:
+            error_message = f"No se pudo registrar el pago en las facturas {invoice_ids}"
+            print(f"❌ {error_message}")
+
+        mongo_logger.log_transaction_commit(
+            token_ws=token_ws or "",
+            transbank_response=payment_result,
+            client_id=client.client_id,
+            odoo_synced=odoo_synced,
+            error=error_message,
+        )
+
+    except Exception as e:
+        error_message = str(e)
+        print(f"❌ Error procesando pago de facturas: {error_message}")
+        mongo_logger.log_transaction_commit(
+            token_ws=token_ws or "",
+            transbank_response=payment_result,
+            client_id=client.client_id,
+            odoo_synced=False,
+            error=error_message,
         )
 
 
