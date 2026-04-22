@@ -159,8 +159,18 @@ class OdooInvoicesService:
             wizard_vals["amount"] = float(amount)
             wizard_vals["payment_date"] = today
             wizard_vals["communication"] = communication
+
+            # journal_id: config explícita > default de Odoo > búsqueda fallback
             if self.invoice_journal_id:
                 wizard_vals["journal_id"] = self.invoice_journal_id
+            elif not wizard_vals.get("journal_id"):
+                fallback_journal = self._find_payment_journal()
+                if fallback_journal:
+                    wizard_vals["journal_id"] = fallback_journal
+                    print(f"⚠️ journal_id no configurado, usando fallback ID={fallback_journal}")
+                else:
+                    print("❌ No se encontró ningún diario de pago. Configura invoice_journal_id en clients.yaml")
+                    return False
 
             # 3. Crear el wizard
             wizard_id = self._rpc(
@@ -189,3 +199,20 @@ class OdooInvoicesService:
         except Exception as e:
             print(f"❌ Error registrando pago en facturas {invoice_ids}: {e}")
             return False
+
+    def _find_payment_journal(self) -> Optional[int]:
+        """Busca el primer diario de tipo banco o caja disponible como fallback."""
+        try:
+            results = self._rpc(
+                "account.journal", "search",
+                [[["type", "in", ["bank", "cash"]]]],
+                {"limit": 1, "order": "sequence asc"},
+                rpc_id=25,
+            )
+            if results:
+                print(f"🔍 Diario de pago encontrado automáticamente: ID={results[0]}")
+                return results[0]
+            return None
+        except Exception as e:
+            print(f"⚠️ Error buscando diario de pago: {e}")
+            return None
