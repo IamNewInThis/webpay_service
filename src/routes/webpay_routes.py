@@ -529,16 +529,24 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
         odoo_url = client.odoo.url
         
         if not token:
-            # Verificar si es una cancelación (tiene TBK_TOKEN pero no token_ws)
+            # Intentar resolver cliente real desde TBK_ID_SESION antes de redirigir
+            tbk_session = params.get("TBK_ID_SESION", "")
+            real_client = _get_client_from_session(tbk_session) or client
+            real_odoo_url = real_client.odoo.url
+
             if "TBK_TOKEN" in params:
-                print("❌ GET - Usuario canceló la transacción")
-                return RedirectResponse(
-                    url=f"{odoo_url}/shop/payment?status=cancelled"
+                print(f"❌ GET - Usuario canceló la transacción (cliente: {real_client.client_id})")
+                is_factura = tbk_session.startswith("F:")
+                cancel_url = (
+                    f"{real_odoo_url}/pago-express?status=cancelado"
+                    if is_factura
+                    else f"{real_odoo_url}/shop/payment?status=cancelled"
                 )
+                return RedirectResponse(url=cancel_url)
             else:
                 print("⚠️ GET - Sin tokens válidos")
                 return RedirectResponse(
-                    url=f"{odoo_url}/shop/payment?status=error"
+                    url=f"{real_odoo_url}/shop/payment?status=error"
                 )
         
         # 🔧 2. CREAR WEBPAY SERVICE CON LA CONFIGURACIÓN DEL CLIENTE
