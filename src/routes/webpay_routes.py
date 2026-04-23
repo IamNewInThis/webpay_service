@@ -440,10 +440,11 @@ async def commit_webpay_transaction_post(request: Request) -> RedirectResponse:
                 # Recuperar el cliente original desde session_id (ignora el fallback del referer)
                 factura_client = _get_client_from_session(session_str) or client
                 odoo_url = factura_client.odoo.url
-                await _process_successful_invoice_payment(result, factura_client, token)
+                invoice_names = await _process_successful_invoice_payment(result, factura_client, token)
+                refs_param = ",".join(invoice_names) if invoice_names else result.get("buy_order", "")
                 redirect_url = (
                     f"{odoo_url}/pago-express"
-                    f"?status=exitoso&ref={result.get('buy_order', '')}"
+                    f"?status=exitoso&refs={refs_param}"
                 )
                 print(f"✅ POST - Pago de factura confirmado: {result.get('buy_order')} (cliente: {factura_client.client_id})")
             else:
@@ -563,10 +564,11 @@ async def commit_webpay_transaction_get(request: Request) -> RedirectResponse:
                 # Recuperar el cliente original desde session_id (ignora el fallback del referer)
                 factura_client = _get_client_from_session(session_str) or client
                 odoo_url = factura_client.odoo.url
-                await _process_successful_invoice_payment(result, factura_client, token)
+                invoice_names = await _process_successful_invoice_payment(result, factura_client, token)
+                refs_param = ",".join(invoice_names) if invoice_names else result.get("buy_order", "")
                 redirect_url = (
                     f"{odoo_url}/pago-express"
-                    f"?status=exitoso&ref={result.get('buy_order', '')}"
+                    f"?status=exitoso&refs={refs_param}"
                 )
                 print(f"✅ GET - Pago de factura confirmado: {result.get('buy_order')} (cliente: {factura_client.client_id})")
             else:
@@ -612,10 +614,11 @@ async def _process_successful_invoice_payment(
     payment_result: Dict[str, Any],
     client: ClientConfig,
     token_ws: Optional[str] = None,
-) -> None:
+) -> List[str]:
     """
     Procesa un pago exitoso de facturas (Pago Express).
     Registra el pago en Odoo via account.payment.register y reconcilia las facturas.
+    Retorna la lista de nombres de facturas pagadas (para incluir en la URL de redirección).
     """
     odoo_synced = False
     error_message = None
@@ -651,7 +654,7 @@ async def _process_successful_invoice_payment(
                 odoo_synced=False,
                 error=error_message,
             )
-            return
+            return []
 
         amount = payment_result.get("amount", 0)
         buy_order = payment_result.get("buy_order", "")
@@ -676,6 +679,13 @@ async def _process_successful_invoice_payment(
             error=error_message,
         )
 
+        # Obtener los nombres reales de las facturas para la URL de redirección
+        invoice_records = invoices_service.get_invoices_by_ids(invoice_ids)
+        invoice_names = [inv["name"] for inv in invoice_records if inv.get("name")]
+        if invoice_names:
+            print(f"📋 Facturas pagadas: {invoice_names}")
+        return invoice_names
+
     except Exception as e:
         error_message = str(e)
         print(f"❌ Error procesando pago de facturas: {error_message}")
@@ -686,6 +696,7 @@ async def _process_successful_invoice_payment(
             odoo_synced=False,
             error=error_message,
         )
+        return []
 
 
 def _identify_client_from_result(payment_result: Dict[str, Any]) -> Optional[ClientConfig]:
